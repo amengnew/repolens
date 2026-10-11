@@ -20,7 +20,6 @@ Request:
 {
   "repoUrl": "https://github.com/owner/repo",
   "provider": "openai",
-  "apiKey": "sk-...",
   "model": "gpt-4o-mini",
   "language": "zh"
 }
@@ -83,6 +82,15 @@ Analysis results are cached by:
 `repoUrl|provider|model|commit|language`
 
 Repeated calls for the same repository, provider, model, commit, and language return the cached result without another model call.
+
+## Provider keys
+
+Model provider keys are configured in the analysis service environment, not in the browser:
+
+- `OPENAI_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `GEMINI_API_KEY`
 
 ## Static analysis
 

@@ -6,7 +6,6 @@ import type { AnalysisProgress } from './analyze';
 export interface AnalyzeRequest {
   repoUrl: string;
   provider: ProviderId;
-  apiKey: string;
   model: string;
   language: Language;
 }

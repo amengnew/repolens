@@ -5,15 +5,14 @@ export interface ProviderConfig {
   label: string;
   defaultModel: string;
   endpoint: string;
-  requiresKey: boolean;
 }
 
 export const providers: ProviderConfig[] = [
-  { id: 'mock', label: 'Mock (local sample)', defaultModel: 'sample', endpoint: '', requiresKey: false },
-  { id: 'openai', label: 'OpenAI', defaultModel: 'gpt-4o-mini', endpoint: 'https://api.openai.com/v1/chat/completions', requiresKey: true },
-  { id: 'deepseek', label: 'DeepSeek', defaultModel: 'deepseek-chat', endpoint: 'https://api.deepseek.com/chat/completions', requiresKey: true },
-  { id: 'anthropic', label: 'Anthropic', defaultModel: 'claude-3-5-sonnet-latest', endpoint: 'https://api.anthropic.com/v1/messages', requiresKey: true },
-  { id: 'gemini', label: 'Google Gemini', defaultModel: 'gemini-1.5-pro', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models', requiresKey: true },
+  { id: 'mock', label: 'Mock (local sample)', defaultModel: 'sample', endpoint: '' },
+  { id: 'openai', label: 'OpenAI', defaultModel: 'gpt-4o-mini', endpoint: 'https://api.openai.com/v1/chat/completions' },
+  { id: 'deepseek', label: 'DeepSeek', defaultModel: 'deepseek-chat', endpoint: 'https://api.deepseek.com/chat/completions' },
+  { id: 'anthropic', label: 'Anthropic', defaultModel: 'claude-3-5-sonnet-latest', endpoint: 'https://api.anthropic.com/v1/messages' },
+  { id: 'gemini', label: 'Google Gemini', defaultModel: 'gemini-1.5-pro', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models' },
 ];
 
 export interface CallAIOptions {
@@ -53,7 +52,6 @@ export async function callAI({ provider, apiKey, model, prompt }: CallAIOptions)
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
         model,

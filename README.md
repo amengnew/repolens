@@ -33,6 +33,19 @@ This starts:
 npm run build
 ```
 
+## AI provider keys
+
+Copy `.env.example` to `.env`, then set the key for the provider you want to use:
+
+```bash
+OPENAI_API_KEY=...
+DEEPSEEK_API_KEY=...
+ANTHROPIC_API_KEY=...
+GEMINI_API_KEY=...
+```
+
+Keys are read by the local analysis API and are not sent through the browser.
+
 ## Documentation
 
 - Development roadmap: `docs/ROADMAP.md`

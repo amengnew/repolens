@@ -8,13 +8,35 @@ const port = 3001;
 const dataDir = path.resolve(process.cwd(), '.data');
 const projectsFile = path.join(dataDir, 'projects.json');
 
+async function loadDotEnv() {
+  try {
+    const raw = await readFile(path.resolve(process.cwd(), '.env'), 'utf8');
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+
+      const separatorIndex = trimmed.indexOf('=');
+      if (separatorIndex === -1) continue;
+
+      const key = trimmed.slice(0, separatorIndex).trim();
+      const value = trimmed.slice(separatorIndex + 1).trim();
+      if (key && !(key in process.env)) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // No .env file is required; provider keys can also be set in the shell.
+  }
+}
+
+await loadDotEnv();
+
 type ProviderId = 'mock' | 'openai' | 'deepseek' | 'anthropic' | 'gemini';
 type Language = 'en' | 'zh';
 
 interface AnalysisRequest {
   repoUrl: string;
   provider: ProviderId;
-  apiKey: string;
   model: string;
   language: Language;
 }
@@ -45,15 +67,12 @@ function parseRequest(body: string): AnalysisRequest {
     throw new Error('Request body must be an object');
   }
 
-  const { repoUrl, provider, apiKey, model, language } = parsed as Partial<AnalysisRequest>;
+  const { repoUrl, provider, model, language } = parsed as Partial<AnalysisRequest>;
   if (typeof repoUrl !== 'string' || !/^https:\/\/github\.com\/[^/]+\/[^/]+/.test(repoUrl)) {
     throw new Error('repoUrl must be a GitHub repository URL');
   }
   if (!['mock', 'openai', 'deepseek', 'anthropic', 'gemini'].includes(provider ?? '')) {
     throw new Error('provider is invalid');
-  }
-  if (typeof apiKey !== 'string') {
-    throw new Error('apiKey must be a string');
   }
   if (typeof model !== 'string' || model.trim().length === 0) {
     throw new Error('model must be a non-empty string');
@@ -62,7 +81,20 @@ function parseRequest(body: string): AnalysisRequest {
     throw new Error('language must be en or zh');
   }
 
-  return { repoUrl, provider, apiKey, model, language };
+  return { repoUrl, provider, model, language };
+}
+
+const providerEnvKeys: Record<ProviderId, string | null> = {
+  mock: null,
+  openai: 'OPENAI_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+  gemini: 'GEMINI_API_KEY',
+};
+
+function providerApiKey(provider: ProviderId) {
+  const envKey = providerEnvKeys[provider];
+  return envKey ? process.env[envKey] ?? '' : '';
 }
 
 async function ensureStore() {
@@ -105,6 +137,10 @@ function publicJob(job: AnalysisJob) {
 }
 
 function createJob(request: AnalysisRequest): AnalysisJob {
+  if (request.provider !== 'mock' && providerApiKey(request.provider).length === 0) {
+    throw new Error(`${providerEnvKeys[request.provider]} is not configured`);
+  }
+
   const job: AnalysisJob = {
     id: randomUUID(),
     status: 'queued',
@@ -138,6 +174,7 @@ async function runJob(jobId: string) {
   try {
     const project = await analyzeRepository({
       ...job.request,
+      apiKey: providerApiKey(job.request.provider),
       onProgress: (progress) => {
       job.progress = Math.max(job.progress, progress.progress);
       job.stage = progress.stage;

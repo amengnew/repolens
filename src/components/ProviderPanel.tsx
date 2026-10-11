@@ -14,7 +14,6 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
   const [repoUrl, setRepoUrl] = useState('https://github.com/vercel/ai');
   const [provider, setProvider] = useState<ProviderId>('mock');
   const [model, setModel] = useState(providers[0].defaultModel);
-  const [apiKey, setApiKey] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [progress, setProgress] = useState(0);
@@ -40,7 +39,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
     setProgress(0);
     try {
       const result = await analyzeRepository(
-        { repoUrl, provider, apiKey, model, language },
+        { repoUrl, provider, model, language },
         ({ progress: nextProgress, stage }) => {
           setProgress(nextProgress);
           setMessage(stage);
@@ -109,18 +108,11 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
             onChange={(event) => setModel(event.target.value)}
             style={{ width: '100%', padding: '10px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
           />
-          {selectedProvider.requiresKey && (
-            <>
-              <label className="detail-label" htmlFor="api-key" style={{ marginTop: '12px' }}>{t('apiKey')}</label>
-              <input
-                id="api-key"
-                type="password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                style={{ width: '100%', padding: '10px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}
-              />
-            </>
-          )}
+          <p className="path-summary">
+            {language === 'zh'
+              ? 'API Key 由后端环境变量提供，不会经过浏览器。'
+              : 'API keys are read from backend environment variables and never pass through the browser.'}
+          </p>
         </div>
       </section>
 

@@ -254,6 +254,7 @@ Out of scope for MVP:
 - **Evidence extraction added:** AI responses now request `sourcePath` and `sourceQuote`; the service verifies quotes against fetched repository files and marks results as source verified, doc verified, or inferred. Unit tests cover all three cases.
 - **Async analysis jobs added:** `/api/analyze` returns a job ID, `/api/analysis/:jobId` exposes progress and stage, and the provider panel polls status while showing a progress bar. The in-memory queue runs up to two analyses concurrently.
 - **Static analysis added:** The service now extracts Express-style and Python framework routes, Next.js App Router paths, Commander CLI commands, event handlers, cron/interval jobs, npm scripts, and dependency metadata before calling the model. The model receives these facts as high-confidence context.
+- **Provider key isolation added:** Model API keys live in analysis API environment variables. The browser no longer sends or stores provider keys.
 - The analysis API is zero-dependency Node HTTP in development, with Vite proxying `/api` requests to `http://127.0.0.1:3001`.
 
 ### M0: Product Foundation
