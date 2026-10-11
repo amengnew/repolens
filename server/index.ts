@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { analyzeRepository } from '../src/ai/analyze.ts';
 
 const port = 3001;
@@ -17,6 +18,26 @@ interface AnalysisRequest {
   model: string;
   language: Language;
 }
+
+type JobStatus = 'queued' | 'running' | 'complete' | 'error';
+
+interface AnalysisJob {
+  id: string;
+  status: JobStatus;
+  progress: number;
+  stage: string;
+  request: AnalysisRequest;
+  result?: unknown;
+  error?: string;
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+const jobs = new Map<string, AnalysisJob>();
+const jobQueue: string[] = [];
+const maxConcurrentJobs = 2;
+let activeJobCount = 0;
 
 function parseRequest(body: string): AnalysisRequest {
   const parsed = JSON.parse(body);
@@ -69,6 +90,83 @@ function cacheKey(input: AnalysisRequest, commit: string) {
   return [input.repoUrl, input.provider, input.model, commit, input.language].join('|');
 }
 
+function publicJob(job: AnalysisJob) {
+  return {
+    jobId: job.id,
+    status: job.status,
+    progress: job.progress,
+    stage: job.stage,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    result: job.result,
+    error: job.error,
+  };
+}
+
+function createJob(request: AnalysisRequest): AnalysisJob {
+  const job: AnalysisJob = {
+    id: randomUUID(),
+    status: 'queued',
+    progress: 0,
+    stage: request.language === 'zh' ? '排队等待分析' : 'Queued for analysis',
+    request,
+    createdAt: Date.now(),
+  };
+  jobs.set(job.id, job);
+  jobQueue.push(job.id);
+  return job;
+}
+
+function processQueue() {
+  while (activeJobCount < maxConcurrentJobs && jobQueue.length > 0) {
+    const jobId = jobQueue.shift();
+    if (!jobId || !jobs.has(jobId)) continue;
+    void runJob(jobId);
+  }
+}
+
+async function runJob(jobId: string) {
+  const job = jobs.get(jobId);
+  if (!job) return;
+
+  activeJobCount += 1;
+  job.status = 'running';
+  job.progress = 5;
+  job.startedAt = Date.now();
+
+  try {
+    const project = await analyzeRepository({
+      ...job.request,
+      onProgress: (progress) => {
+      job.progress = Math.max(job.progress, progress.progress);
+      job.stage = progress.stage;
+      },
+    });
+
+    const key = cacheKey(job.request, project.commit);
+    const projects = await loadProjects();
+    const cached = projects[key];
+    const result = cached ?? project;
+    if (!cached) {
+      await saveProject(key, project);
+    }
+
+    job.result = result;
+    job.status = 'complete';
+    job.progress = 100;
+    job.stage = job.request.language === 'zh' ? '分析完成' : 'Analysis complete';
+    job.completedAt = Date.now();
+  } catch (error) {
+    job.status = 'error';
+    job.error = error instanceof Error ? error.message : 'Analysis failed';
+    job.completedAt = Date.now();
+  } finally {
+    activeJobCount -= 1;
+    processQueue();
+  }
+}
+
 async function readBody(req: import('node:http').IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -100,22 +198,28 @@ const server = createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const input = parseRequest(body);
-      const project = await analyzeRepository(input);
-      const key = cacheKey(input, project.commit);
-      const projects = await loadProjects();
-      const cached = projects[key];
-      if (cached) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(cached));
-        return;
-      }
-      await saveProject(key, project);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(project));
+      const job = createJob(input);
+      processQueue();
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(publicJob(job)));
     } catch (error) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Analysis failed' }));
     }
+    return;
+  }
+
+  if (req.method === 'GET' && req.url?.startsWith('/api/analysis/')) {
+    const jobId = req.url.slice('/api/analysis/'.length);
+    const job = jobs.get(jobId);
+    if (!job) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Analysis job not found' }));
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(publicJob(job)));
     return;
   }
 

@@ -17,6 +17,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
   const [apiKey, setApiKey] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  const [progress, setProgress] = useState(0);
 
   const selectedProvider = providers.find((item) => item.id === provider) ?? providers[0];
   const providerLabels: Record<ProviderId, string> = {
@@ -36,10 +37,18 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
   const handleAnalyze = async () => {
     setStatus('loading');
     setMessage('');
+    setProgress(0);
     try {
-      const result = await analyzeRepository({ repoUrl, provider, apiKey, model, language });
+      const result = await analyzeRepository(
+        { repoUrl, provider, apiKey, model, language },
+        ({ progress: nextProgress, stage }) => {
+          setProgress(nextProgress);
+          setMessage(stage);
+        },
+      );
       onAnalysisComplete(result);
       setStatus('success');
+      setProgress(100);
       setMessage(`${t('analyzedWith')}: ${result.name} · ${providerLabels[selectedProvider.id]}`);
     } catch (error) {
       setStatus('error');
@@ -129,6 +138,11 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
           <p className="path-summary" style={{ marginTop: '12px', color: status === 'error' ? 'var(--red)' : 'var(--teal)' }}>
             {message}
           </p>
+        )}
+        {status === 'loading' && (
+          <div className="progress-bar" style={{ marginTop: '14px' }}>
+            <div className="progress-fill" style={{ width: `${progress}%` }} />
+          </div>
         )}
       </section>
     </div>

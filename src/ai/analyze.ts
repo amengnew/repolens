@@ -9,6 +9,12 @@ export interface AnalyzeOptions {
   apiKey: string;
   model: string;
   language: Language;
+  onProgress?: (progress: AnalysisProgress) => void;
+}
+
+export interface AnalysisProgress {
+  progress: number;
+  stage: string;
 }
 
 interface SimplifiedAnalysis {
@@ -75,11 +81,23 @@ function parseGitHubUrl(url: string) {
   return { owner: match[1], repo: match[2].replace(/\.git$/, '') };
 }
 
-async function fetchRepositoryContext(repoUrl: string): Promise<RepositoryContext> {
+async function fetchRepositoryContext(
+  repoUrl: string,
+  language: Language,
+  onProgress?: (progress: AnalysisProgress) => void,
+): Promise<RepositoryContext> {
   const { owner, repo } = parseGitHubUrl(repoUrl);
+  onProgress?.({
+    progress: 10,
+    stage: language === 'zh' ? '读取仓库元数据' : 'Fetching repository metadata',
+  });
   const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
   if (!repoResponse.ok) throw new Error(`GitHub repository request failed: ${repoResponse.status}`);
   const repoData = await repoResponse.json();
+  onProgress?.({
+    progress: 25,
+    stage: language === 'zh' ? '固定 commit' : 'Pinning commit',
+  });
   const commitResponse = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/commits/${repoData.default_branch}`,
   );
@@ -89,6 +107,10 @@ async function fetchRepositoryContext(repoUrl: string): Promise<RepositoryContex
   const commitData = await commitResponse.json();
   const commit = commitData.sha;
 
+  onProgress?.({
+    progress: 40,
+    stage: language === 'zh' ? '读取文件树' : 'Reading repository tree',
+  });
   const treeResponse = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/git/trees/${commit}?recursive=1`,
   );
@@ -119,6 +141,10 @@ async function fetchRepositoryContext(repoUrl: string): Promise<RepositoryContex
     .sort((a, b) => b.score - a.score);
   const selectedPaths = priorityPaths.slice(0, 16).map((item: { path: string }) => item.path);
 
+  onProgress?.({
+    progress: 55,
+    stage: language === 'zh' ? '下载关键源码文件' : 'Downloading key source files',
+  });
   const filePromises = selectedPaths.map(async (path: string) => {
     const response = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${commit}/${path}`);
     if (!response.ok) return { path, content: '' };
@@ -426,14 +452,37 @@ export function toProject(
   };
 }
 
-export async function analyzeRepository({ repoUrl, provider, apiKey, model, language }: AnalyzeOptions): Promise<Project> {
+export async function analyzeRepository({
+  repoUrl,
+  provider,
+  apiKey,
+  model,
+  language,
+  onProgress,
+}: AnalyzeOptions): Promise<Project> {
   if (provider === 'mock') {
+    onProgress?.({
+      progress: 90,
+      stage: language === 'zh' ? '生成示例分析' : 'Generating sample analysis',
+    });
     return sampleProject;
   }
 
-  const context = await fetchRepositoryContext(repoUrl);
+  const context = await fetchRepositoryContext(repoUrl, language, onProgress);
+  onProgress?.({
+    progress: 70,
+    stage: language === 'zh' ? '调用模型分析仓库' : 'Calling model to analyze repository',
+  });
   const prompt = buildPrompt(context, language);
   const responseText = await callAI({ provider, apiKey, model, prompt });
+  onProgress?.({
+    progress: 85,
+    stage: language === 'zh' ? '解析结构化结果' : 'Parsing structured result',
+  });
   const analysis = parseAIResponse(responseText);
+  onProgress?.({
+    progress: 95,
+    stage: language === 'zh' ? '生成项目学习地图' : 'Building project learning map',
+  });
   return toProject(analysis, context, language);
 }

@@ -12,6 +12,8 @@ Returns service status.
 
 ### `POST /api/analyze`
 
+Creates an asynchronous analysis job.
+
 Request:
 
 ```json
@@ -28,15 +30,45 @@ Response:
 
 ```json
 {
-  "name": "repo",
-  "repository": "github.com/owner/repo",
-  "commit": "commit_sha",
-  "summary": "...",
-  "techStack": ["..."],
-  "entries": [],
-  "flows": [],
-  "decisions": [],
-  "evidence": []
+  "jobId": "uuid",
+  "status": "queued",
+  "progress": 0,
+  "stage": "Queued for analysis"
+}
+```
+
+### `GET /api/analysis/:jobId`
+
+Returns job status. When `status` is `complete`, the response includes the full project analysis in `result`.
+
+```json
+{
+  "jobId": "uuid",
+  "status": "running",
+  "progress": 55,
+  "stage": "Downloading key source files"
+}
+```
+
+Completed result:
+
+```json
+{
+  "jobId": "uuid",
+  "status": "complete",
+  "progress": 100,
+  "stage": "Analysis complete",
+  "result": {
+    "name": "repo",
+    "repository": "github.com/owner/repo",
+    "commit": "commit_sha",
+    "summary": "...",
+    "techStack": ["..."],
+    "entries": [],
+    "flows": [],
+    "decisions": [],
+    "evidence": []
+  }
 }
 ```
 
