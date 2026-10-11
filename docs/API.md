@@ -79,6 +79,20 @@ Returns cached analysis keys.
 
 Returns the 50 most recently completed analysis jobs. Each item includes repository, commit, provider, model, language, completion time, and summary. Use `GET /api/analysis/:jobId` to load the full result.
 
+### `GET /api/providers`
+
+Returns provider runtime configuration, including available models, endpoint, environment variable name, and whether the key is configured.
+
+### `POST /api/provider/config`
+
+Configures a provider API key. By default the key is persisted to the local `.env` file; send `persist: false` to update only the current server process.
+
+### `POST /api/provider/test`
+
+Tests provider connectivity with a selected model. Returns success, latency, and a response preview, or a structured error.
+
+The server emits structured JSON logs for provider configuration, provider tests, analysis queueing, progress, cache hits, completion, and failures.
+
 ### `GET /api/compare/:baseJobId/:targetJobId`
 
 Compares two completed analyses and returns metadata plus added, removed, changed, and unchanged entries, flows, and engineering decisions.

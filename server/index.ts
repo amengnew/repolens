@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { analyzeRepository } from '../src/ai/analyze.ts';
 import { compareProjects, type ComparisonResult } from '../src/ai/comparison.ts';
+import { callAI, providers, type ProviderId } from '../src/ai/providers.ts';
 
 const port = 3001;
 const dataDir = path.resolve(process.cwd(), '.data');
@@ -33,7 +34,6 @@ async function loadDotEnv() {
 
 await loadDotEnv();
 
-type ProviderId = 'mock' | 'openai' | 'deepseek' | 'anthropic' | 'gemini';
 type Language = 'en' | 'zh';
 
 interface AnalysisRequest {
@@ -62,6 +62,14 @@ const jobs = new Map<string, AnalysisJob>();
 const jobQueue: string[] = [];
 const maxConcurrentJobs = 2;
 let activeJobCount = 0;
+
+function log(event: string, details: Record<string, unknown> = {}) {
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    event,
+    ...details,
+  }));
+}
 
 function parseRequest(body: string): AnalysisRequest {
   const parsed = JSON.parse(body);
@@ -97,6 +105,58 @@ const providerEnvKeys: Record<ProviderId, string | null> = {
 function providerApiKey(provider: ProviderId) {
   const envKey = providerEnvKeys[provider];
   return envKey ? process.env[envKey] ?? '' : '';
+}
+
+async function saveEnvValue(envKey: string, value: string) {
+  const envPath = path.resolve(process.cwd(), '.env');
+  const raw = await readFile(envPath, 'utf8').catch(() => '');
+  const lines = raw.split(/\r?\n/);
+  let found = false;
+
+  const nextLines = lines.map((line) => {
+    if (line.trim().startsWith(`${envKey}=`)) {
+      found = true;
+      return `${envKey}=${value}`;
+    }
+    return line;
+  });
+
+  if (!found) {
+    nextLines.push(`${envKey}=${value}`);
+  }
+
+  await writeFile(envPath, nextLines.join('\n').replace(/\n{3,}/g, '\n\n'), 'utf8');
+}
+
+function publicProviders() {
+  return providers.map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    defaultModel: provider.defaultModel,
+    models: provider.models,
+    endpoint: provider.endpoint,
+    envKey: providerEnvKeys[provider.id],
+    configured: provider.id === 'mock' || providerApiKey(provider.id).length > 0,
+  }));
+}
+
+function parseProviderRequest(body: string) {
+  const parsed = JSON.parse(body);
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error('Request body must be an object');
+  }
+
+  const provider = parsed.provider as ProviderId | undefined;
+  if (!providers.some((item) => item.id === provider)) {
+    throw new Error('provider is invalid');
+  }
+
+  return {
+    provider: provider as ProviderId,
+    model: typeof parsed.model === 'string' ? parsed.model : '',
+    apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : '',
+    persist: parsed.persist !== false,
+  };
 }
 
 async function ensureStore() {
@@ -193,6 +253,13 @@ function createJob(request: AnalysisRequest): AnalysisJob {
   jobs.set(job.id, job);
   jobQueue.push(job.id);
   void saveJob(job);
+  log('analysis:queued', {
+    jobId: job.id,
+    repository: request.repoUrl,
+    provider: request.provider,
+    model: request.model,
+    language: request.language,
+  });
   return job;
 }
 
@@ -212,6 +279,12 @@ async function runJob(jobId: string) {
   job.status = 'running';
   job.progress = 5;
   job.startedAt = Date.now();
+  log('analysis:started', {
+    jobId,
+    repository: job.request.repoUrl,
+    provider: job.request.provider,
+    model: job.request.model,
+  });
 
   try {
     const project = await analyzeRepository({
@@ -220,6 +293,11 @@ async function runJob(jobId: string) {
       onProgress: (progress) => {
       job.progress = Math.max(job.progress, progress.progress);
       job.stage = progress.stage;
+      log('analysis:progress', {
+        jobId,
+        progress: job.progress,
+        stage: job.stage,
+      });
       },
     });
 
@@ -227,6 +305,10 @@ async function runJob(jobId: string) {
     const projects = await loadProjects();
     const cached = projects[key];
     const result = cached ?? project;
+    log(cached ? 'analysis:cache-hit' : 'analysis:cache-miss', {
+      jobId,
+      cacheKey: key,
+    });
     if (!cached) {
       await saveProject(key, project);
     }
@@ -236,11 +318,23 @@ async function runJob(jobId: string) {
     job.progress = 100;
     job.stage = job.request.language === 'zh' ? '分析完成' : 'Analysis complete';
     job.completedAt = Date.now();
+    log('analysis:complete', {
+      jobId,
+      repository: (project as { repository?: string }).repository,
+      commit: (project as { commit?: string }).commit,
+      evidenceCount: (project as { evidence?: unknown[] }).evidence?.length ?? 0,
+      durationMs: job.completedAt - (job.startedAt ?? job.createdAt),
+    });
     void saveJob(job);
   } catch (error) {
     job.status = 'error';
     job.error = error instanceof Error ? error.message : 'Analysis failed';
     job.completedAt = Date.now();
+    log('analysis:error', {
+      jobId,
+      error: job.error,
+      durationMs: job.completedAt - (job.startedAt ?? job.createdAt),
+    });
     void saveJob(job);
   } finally {
     activeJobCount -= 1;
@@ -297,6 +391,121 @@ const server = createServer(async (req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(history));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/providers') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(publicProviders()));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/provider/config') {
+    try {
+      const input = parseProviderRequest(await readBody(req));
+      const envKey = providerEnvKeys[input.provider];
+
+      if (input.provider === 'mock') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Mock provider does not need configuration' }));
+        return;
+      }
+
+      if (!envKey) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Provider environment key is not defined' }));
+        return;
+      }
+
+      if (input.apiKey.trim().length === 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'API key is required' }));
+        return;
+      }
+
+      process.env[envKey] = input.apiKey.trim();
+      if (input.persist) {
+        await saveEnvValue(envKey, input.apiKey.trim());
+      }
+
+      log('provider:configured', {
+        provider: input.provider,
+        envKey,
+        persisted: input.persist,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        provider: input.provider,
+        envKey,
+        configured: true,
+        persisted: input.persist,
+      }));
+    } catch (error) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Provider configuration failed' }));
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/provider/test') {
+    const startedAt = Date.now();
+    try {
+      const input = parseProviderRequest(await readBody(req));
+      if (input.model.trim().length === 0) {
+        throw new Error('model is required');
+      }
+
+      const apiKey = input.apiKey.trim() || providerApiKey(input.provider);
+      if (input.provider !== 'mock' && apiKey.length === 0) {
+        throw new Error(`${providerEnvKeys[input.provider]} is not configured`);
+      }
+
+      log('provider:test:started', {
+        provider: input.provider,
+        model: input.model,
+      });
+
+      const responseText = await callAI({
+        provider: input.provider,
+        apiKey,
+        model: input.model,
+        prompt: 'Reply with exactly: connected',
+      });
+      const latencyMs = Date.now() - startedAt;
+
+      log('provider:test:complete', {
+        provider: input.provider,
+        model: input.model,
+        latencyMs,
+        responseLength: responseText.length,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok: true,
+        provider: input.provider,
+        model: input.model,
+        latencyMs,
+        responsePreview: responseText.slice(0, 120),
+      }));
+    } catch (error) {
+      const latencyMs = Date.now() - startedAt;
+      const message = error instanceof Error ? error.message : 'Provider test failed';
+
+      log('provider:test:error', {
+        provider: 'unknown',
+        error: message,
+        latencyMs,
+      });
+
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok: false,
+        error: message,
+        latencyMs,
+      }));
+    }
     return;
   }
 

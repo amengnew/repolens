@@ -158,6 +158,29 @@ button {
   background: var(--surface);
 }
 
+.text-input {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.provider-ready,
+.provider-missing {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+}
+
+.provider-ready {
+  background: var(--teal);
+}
+
+.provider-missing {
+  background: var(--red);
+}
+
 .commit-pill {
   font-family: var(--mono);
 }

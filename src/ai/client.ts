@@ -90,6 +90,72 @@ export async function compareAnalyses(
   return response.json();
 }
 
+export interface ProviderRuntimeConfig {
+  id: ProviderId;
+  label: string;
+  defaultModel: string;
+  models: string[];
+  endpoint: string;
+  envKey: string | null;
+  configured: boolean;
+}
+
+export async function getProviderConfigs(): Promise<ProviderRuntimeConfig[]> {
+  const response = await fetch('/api/providers');
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Provider configuration failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function configureProvider(request: {
+  provider: ProviderId;
+  apiKey: string;
+  persist?: boolean;
+}): Promise<{ configured: boolean; persisted: boolean; envKey: string }> {
+  const response = await fetch('/api/provider/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Provider configuration failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function testProvider(request: {
+  provider: ProviderId;
+  model: string;
+  apiKey?: string;
+}): Promise<{
+  ok: boolean;
+  provider: ProviderId;
+  model: string;
+  latencyMs: number;
+  responsePreview: string;
+  error?: string;
+}> {
+  const response = await fetch('/api/provider/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error || `Provider test failed: ${response.status}`);
+  }
+
+  return result;
+}
+
 export function analyzeRepository(
   request: AnalyzeRequest,
   onProgress?: (progress: AnalysisProgress) => void,

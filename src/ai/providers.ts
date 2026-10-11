@@ -4,15 +4,46 @@ export interface ProviderConfig {
   id: ProviderId;
   label: string;
   defaultModel: string;
+  models: string[];
   endpoint: string;
 }
 
 export const providers: ProviderConfig[] = [
-  { id: 'mock', label: 'Mock (local sample)', defaultModel: 'sample', endpoint: '' },
-  { id: 'openai', label: 'OpenAI', defaultModel: 'gpt-4o-mini', endpoint: 'https://api.openai.com/v1/chat/completions' },
-  { id: 'deepseek', label: 'DeepSeek', defaultModel: 'deepseek-chat', endpoint: 'https://api.deepseek.com/chat/completions' },
-  { id: 'anthropic', label: 'Anthropic', defaultModel: 'claude-3-5-sonnet-latest', endpoint: 'https://api.anthropic.com/v1/messages' },
-  { id: 'gemini', label: 'Google Gemini', defaultModel: 'gemini-1.5-pro', endpoint: 'https://generativelanguage.googleapis.com/v1beta/models' },
+  {
+    id: 'mock',
+    label: 'Mock (local sample)',
+    defaultModel: 'sample',
+    models: ['sample'],
+    endpoint: '',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    defaultModel: 'gpt-4o-mini',
+    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1'],
+    endpoint: 'https://api.openai.com/v1/chat/completions',
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    defaultModel: 'deepseek-chat',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    endpoint: 'https://api.deepseek.com/chat/completions',
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic',
+    defaultModel: 'claude-3-5-sonnet-latest',
+    models: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'],
+    endpoint: 'https://api.anthropic.com/v1/messages',
+  },
+  {
+    id: 'gemini',
+    label: 'Google Gemini',
+    defaultModel: 'gemini-1.5-pro',
+    models: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash'],
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
+  },
 ];
 
 export interface CallAIOptions {
@@ -40,7 +71,10 @@ export async function callAI({ provider, apiKey, model, prompt }: CallAIOptions)
         temperature: 0.2,
       }),
     });
-    if (!response.ok) throw new Error(`AI request failed: ${response.status}`);
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`AI request failed: ${response.status} ${errorBody.slice(0, 300)}`);
+    }
     const data = await response.json();
     return data.choices?.[0]?.message?.content ?? '';
   }
@@ -59,7 +93,10 @@ export async function callAI({ provider, apiKey, model, prompt }: CallAIOptions)
         messages: [{ role: 'user', content: prompt }],
       }),
     });
-    if (!response.ok) throw new Error(`AI request failed: ${response.status}`);
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`AI request failed: ${response.status} ${errorBody.slice(0, 300)}`);
+    }
     const data = await response.json();
     return data.content?.[0]?.text ?? '';
   }
@@ -70,7 +107,10 @@ export async function callAI({ provider, apiKey, model, prompt }: CallAIOptions)
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
     });
-    if (!response.ok) throw new Error(`AI request failed: ${response.status}`);
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`AI request failed: ${response.status} ${errorBody.slice(0, 300)}`);
+    }
     const data = await response.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
   }

@@ -77,6 +77,13 @@ console.log('PASS: evidence panel contains source-verified evidence');
 
 await page.getByRole('button', { name: 'AI 供应商' }).click();
 await expectVisible('.filter-button', 'Provider options');
+await page.getByRole('button', { name: 'OpenAI' }).click();
+await page.getByRole('button', { name: '保存并测试' }).click();
+await expectVisible('#api-key', 'Provider key input');
+await page.getByRole('button', { name: 'Mock（本地示例）' }).click();
+await page.getByRole('button', { name: '保存并测试' }).click();
+await page.waitForTimeout(500);
+console.log('PASS: provider connection test is available');
 await page.getByRole('button', { name: '分析仓库' }).click();
 await page.waitForTimeout(500);
 await expectVisible('.metric-card', 'Analysis result metrics');
