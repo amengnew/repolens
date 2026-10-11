@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { analyzeRepository } from '../src/ai/analyze.ts';
+import { compareProjects, type ComparisonResult } from '../src/ai/comparison.ts';
 
 const port = 3001;
 const dataDir = path.resolve(process.cwd(), '.data');
@@ -325,6 +326,42 @@ const server = createServer(async (req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(publicJob(job)));
+    return;
+  }
+
+  if (req.method === 'GET' && req.url?.startsWith('/api/compare/')) {
+    const [baseJobId, targetJobId] = req.url
+      .slice('/api/compare/'.length)
+      .split('/')
+      .map((value) => decodeURIComponent(value));
+
+    const baseJob = jobs.get(baseJobId ?? '');
+    const targetJob = jobs.get(targetJobId ?? '');
+    if (!baseJob?.result || !targetJob?.result) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Both analysis jobs must exist and be complete' }));
+      return;
+    }
+
+    const result = compareProjects(baseJob.result as never, targetJob.result as never, {
+      base: {
+        jobId: baseJob.id,
+        provider: baseJob.request.provider,
+        model: baseJob.request.model,
+        language: baseJob.request.language,
+        completedAt: baseJob.completedAt ?? 0,
+      },
+      target: {
+        jobId: targetJob.id,
+        provider: targetJob.request.provider,
+        model: targetJob.request.model,
+        language: targetJob.request.language,
+        completedAt: targetJob.completedAt ?? 0,
+      },
+    });
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
     return;
   }
 

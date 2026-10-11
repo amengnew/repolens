@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   Boxes,
   GitBranch,
+  GitCompare,
   LayoutDashboard,
   Lightbulb,
   History,
@@ -16,6 +17,7 @@ import { EntryMapPanel } from './components/EntryMapPanel';
 import { EvidencePanel } from './components/EvidencePanel';
 import { FlowExplorerPanel } from './components/FlowExplorerPanel';
 import { HistoryPanel } from './components/HistoryPanel';
+import { ComparePanel } from './components/ComparePanel';
 import { LearningPathPanel } from './components/LearningPathPanel';
 import { OverviewPanel } from './components/OverviewPanel';
 import { ProviderPanel } from './components/ProviderPanel';
@@ -24,11 +26,29 @@ import { useI18n } from './i18n';
 import { getAnalysisJob } from './ai/client';
 import type { Project } from './types';
 
-type ViewId = 'overview' | 'entries' | 'flows' | 'decisions' | 'ask' | 'path' | 'provider' | 'history';
+type ViewId =
+  | 'overview'
+  | 'entries'
+  | 'flows'
+  | 'decisions'
+  | 'ask'
+  | 'path'
+  | 'provider'
+  | 'history'
+  | 'compare';
 
 const views: Array<{
   id: ViewId;
-  labelKey: 'overview' | 'entries' | 'flows' | 'decisions' | 'ask' | 'path' | 'provider' | 'history';
+  labelKey:
+    | 'overview'
+    | 'entries'
+    | 'flows'
+    | 'decisions'
+    | 'ask'
+    | 'path'
+    | 'provider'
+    | 'history'
+    | 'compare';
   icon: typeof LayoutDashboard;
 }> = [
   { id: 'overview', labelKey: 'overview', icon: LayoutDashboard },
@@ -39,6 +59,7 @@ const views: Array<{
   { id: 'path', labelKey: 'path', icon: Route },
   { id: 'provider', labelKey: 'provider', icon: Boxes },
   { id: 'history', labelKey: 'history', icon: History },
+  { id: 'compare', labelKey: 'compare', icon: GitCompare },
 ];
 
 export default function App() {
@@ -285,6 +306,7 @@ export default function App() {
             {activeView === 'history' && (
               <HistoryPanel onLoadProject={handleLoadHistoryProject} />
             )}
+            {activeView === 'compare' && <ComparePanel />}
           </main>
 
           <EvidencePanel

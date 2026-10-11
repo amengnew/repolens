@@ -257,6 +257,7 @@ Out of scope for MVP:
 - **Provider key isolation added:** Model API keys live in analysis API environment variables. The browser no longer sends or stores provider keys.
 - **AI response schema validation added:** Entry roles and kinds, flow steps, decision fields, parameters, alternatives, trade-offs, and source references are validated before results enter the workspace. Unit tests cover valid and invalid responses.
 - **Job persistence and history added:** Analysis jobs are persisted to `.data/jobs.json`, interrupted jobs are marked as failed after a service restart, and `/api/history` plus the frontend History view load completed analyses.
+- **Analysis comparison added:** `/api/compare/:baseJobId/:targetJobId` compares two completed analyses and the frontend Compare view shows entry, flow, decision, and evidence differences.
 - The analysis API is zero-dependency Node HTTP in development, with Vite proxying `/api` requests to `http://127.0.0.1:3001`.
 
 ### M0: Product Foundation

@@ -79,6 +79,10 @@ Returns cached analysis keys.
 
 Returns the 50 most recently completed analysis jobs. Each item includes repository, commit, provider, model, language, completion time, and summary. Use `GET /api/analysis/:jobId` to load the full result.
 
+### `GET /api/compare/:baseJobId/:targetJobId`
+
+Compares two completed analyses and returns metadata plus added, removed, changed, and unchanged entries, flows, and engineering decisions.
+
 ## Caching
 
 Analysis results are cached by:

@@ -88,6 +88,17 @@ await page.locator('.path-check').first().click();
 await expectVisible('.metric-card', 'History project metrics');
 console.log('PASS: history project reloads into the workspace');
 
+await page.getByRole('button', { name: 'AI 供应商' }).click();
+await page.getByRole('button', { name: '分析仓库' }).click();
+await page.waitForTimeout(500);
+await expectVisible('.metric-card', 'Second analysis metrics');
+
+await page.getByRole('button', { name: '对比' }).click();
+await expectVisible('.compare-select', 'Comparison selectors');
+await page.getByRole('button', { name: '对比分析' }).click();
+await expectVisible('.metric-card', 'Comparison result metrics');
+console.log('PASS: analysis comparison renders differences');
+
 console.log('PASS: evidence panel contains source-verified evidence');
 
 await browser.close();

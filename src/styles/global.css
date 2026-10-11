@@ -150,6 +150,14 @@ button {
   color: white;
 }
 
+.compare-select {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
 .commit-pill {
   font-family: var(--mono);
 }
