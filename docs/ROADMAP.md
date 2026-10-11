@@ -259,6 +259,7 @@ Out of scope for MVP:
 - **Job persistence and history added:** Analysis jobs are persisted to `.data/jobs.json`, interrupted jobs are marked as failed after a service restart, and `/api/history` plus the frontend History view load completed analyses.
 - **Analysis comparison added:** `/api/compare/:baseJobId/:targetJobId` compares two completed analyses and the frontend Compare view shows entry, flow, decision, and evidence differences.
 - **Provider runtime configuration added:** The AI provider view now shows configured status, accepts API keys, persists them to local `.env`, supports model selection, and tests provider connectivity. Structured JSON logs trace configuration, tests, analysis progress, cache hits, completion, and errors.
+- **Repository-centric navigation added:** New Analysis is the default entry and binds provider, model, and repository URL before analysis. The workspace then exposes the repository content under Current Repository, while Global Repository History groups analyses by repository and loads the latest result.
 - The analysis API is zero-dependency Node HTTP in development, with Vite proxying `/api` requests to `http://127.0.0.1:3001`.
 
 ### M0: Product Foundation

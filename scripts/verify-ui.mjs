@@ -28,6 +28,11 @@ async function checkNoHorizontalOverflow(label) {
 await page.goto(baseUrl, { waitUntil: 'networkidle' });
 await expectVisible('.top-bar', 'App shell');
 await expectVisible('.nav-button', 'Sidebar navigation');
+await expectVisible('#repo-url', 'New analysis form');
+await checkNoHorizontalOverflow('New analysis');
+await page.screenshot({ path: 'screenshots/new-analysis.png', fullPage: true });
+
+await page.getByRole('button', { name: '项目总览' }).click();
 await expectVisible('.metric-card', 'Overview metrics');
 await checkNoHorizontalOverflow('Overview');
 await page.screenshot({ path: 'screenshots/overview.png', fullPage: true });
@@ -75,7 +80,7 @@ if (!/source verified|源码已验证/i.test(evidenceBeforeAnalysis)) {
 }
 console.log('PASS: evidence panel contains source-verified evidence');
 
-await page.getByRole('button', { name: 'AI 供应商' }).click();
+await page.getByRole('button', { name: '新分析' }).click();
 await expectVisible('.filter-button', 'Provider options');
 await page.getByRole('button', { name: 'OpenAI' }).click();
 await page.getByRole('button', { name: '保存并测试' }).click();
@@ -89,13 +94,19 @@ await page.waitForTimeout(500);
 await expectVisible('.metric-card', 'Analysis result metrics');
 console.log('PASS: mock provider analysis updates the workspace');
 
+await page.getByRole('button', { name: '全局仓库历史' }).click();
+await expectVisible('.path-item', 'Repository history items');
+await page.locator('.path-check').first().click();
+await expectVisible('.metric-card', 'Repository project metrics');
+console.log('PASS: repository history loads the latest project');
+
 await page.getByRole('button', { name: '历史分析' }).click();
 await expectVisible('.path-item', 'Analysis history items');
 await page.locator('.path-check').first().click();
 await expectVisible('.metric-card', 'History project metrics');
 console.log('PASS: history project reloads into the workspace');
 
-await page.getByRole('button', { name: 'AI 供应商' }).click();
+await page.getByRole('button', { name: '新分析' }).click();
 await page.getByRole('button', { name: '分析仓库' }).click();
 await page.waitForTimeout(500);
 await expectVisible('.metric-card', 'Second analysis metrics');

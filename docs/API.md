@@ -79,6 +79,10 @@ Returns cached analysis keys.
 
 Returns the 50 most recently completed analysis jobs. Each item includes repository, commit, provider, model, language, completion time, and summary. Use `GET /api/analysis/:jobId` to load the full result.
 
+### `GET /api/repositories`
+
+Returns completed analyses grouped by repository. Each item includes the repository name, analysis count, latest job ID, latest commit, latest completion time, providers, models, and summary.
+
 ### `GET /api/providers`
 
 Returns provider runtime configuration, including available models, endpoint, environment variable name, and whether the key is configured.

@@ -74,6 +74,29 @@ export async function getAnalysisHistory(): Promise<AnalysisHistoryItem[]> {
   return response.json();
 }
 
+export interface RepositoryHistoryItem {
+  repository: string;
+  name: string;
+  analysisCount: number;
+  latestJobId: string;
+  latestCommit: string;
+  latestCompletedAt: number;
+  providers: string[];
+  models: string[];
+  summary: string;
+}
+
+export async function getRepositoryHistory(): Promise<RepositoryHistoryItem[]> {
+  const response = await fetch('/api/repositories');
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Repository history failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
 export async function compareAnalyses(
   baseJobId: string,
   targetJobId: string,

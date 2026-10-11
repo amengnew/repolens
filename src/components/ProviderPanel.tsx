@@ -162,18 +162,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
         </div>
       </section>
 
-      <section className="panel-section two-column">
-        <div className="list-panel">
-          <h2 className="panel-heading">{t('repository')}</h2>
-          <label className="detail-label" htmlFor="repo-url">{t('githubUrl')}</label>
-          <input
-            id="repo-url"
-            type="url"
-            value={repoUrl}
-            onChange={(event) => setRepoUrl(event.target.value)}
-            className="text-input"
-          />
-        </div>
+      <section className={provider === 'mock' ? 'panel-section' : 'panel-section two-column'}>
         <div className="list-panel">
           <h2 className="panel-heading">{t('modelSelection')}</h2>
           <label className="detail-label" htmlFor="model">{t('model')}</label>
@@ -191,9 +180,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
             ))}
           </datalist>
         </div>
-      </section>
 
-      <section className={provider === 'mock' ? 'panel-section' : 'panel-section two-column'}>
         {provider !== 'mock' && (
           <div className="list-panel">
             <h2 className="panel-heading">{t('apiKey')}</h2>
@@ -232,6 +219,20 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
               {connectionMessage}
             </p>
           )}
+        </div>
+      </section>
+
+      <section className="panel-section">
+        <div className="list-panel">
+          <h2 className="panel-heading">{t('repository')}</h2>
+          <label className="detail-label" htmlFor="repo-url">{t('githubUrl')}</label>
+          <input
+            id="repo-url"
+            type="url"
+            value={repoUrl}
+            onChange={(event) => setRepoUrl(event.target.value)}
+            className="text-input"
+          />
         </div>
       </section>
 

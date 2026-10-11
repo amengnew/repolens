@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   Boxes,
+  Database,
   GitBranch,
   GitCompare,
   LayoutDashboard,
@@ -21,6 +22,7 @@ import { ComparePanel } from './components/ComparePanel';
 import { LearningPathPanel } from './components/LearningPathPanel';
 import { OverviewPanel } from './components/OverviewPanel';
 import { ProviderPanel } from './components/ProviderPanel';
+import { RepositoryHistoryPanel } from './components/RepositoryHistoryPanel';
 import { localizeProject } from './data/localizeProject';
 import { useI18n } from './i18n';
 import { getAnalysisJob } from './ai/client';
@@ -34,10 +36,11 @@ type ViewId =
   | 'ask'
   | 'path'
   | 'provider'
+  | 'repositories'
   | 'history'
   | 'compare';
 
-const views: Array<{
+interface ViewConfig {
   id: ViewId;
   labelKey:
     | 'overview'
@@ -48,16 +51,27 @@ const views: Array<{
     | 'path'
     | 'provider'
     | 'history'
-    | 'compare';
+    | 'compare'
+    | 'newAnalysis'
+    | 'globalRepositoryHistory';
   icon: typeof LayoutDashboard;
-}> = [
+}
+
+const analysisViews: ViewConfig[] = [
+  { id: 'provider', labelKey: 'newAnalysis', icon: Boxes },
+];
+
+const repositoryViews: ViewConfig[] = [
   { id: 'overview', labelKey: 'overview', icon: LayoutDashboard },
   { id: 'entries', labelKey: 'entries', icon: Network },
   { id: 'flows', labelKey: 'flows', icon: GitBranch },
   { id: 'decisions', labelKey: 'decisions', icon: Lightbulb },
   { id: 'ask', labelKey: 'ask', icon: MessageSquare },
   { id: 'path', labelKey: 'path', icon: Route },
-  { id: 'provider', labelKey: 'provider', icon: Boxes },
+];
+
+const globalViews: ViewConfig[] = [
+  { id: 'repositories', labelKey: 'globalRepositoryHistory', icon: Database },
   { id: 'history', labelKey: 'history', icon: History },
   { id: 'compare', labelKey: 'compare', icon: GitCompare },
 ];
@@ -65,7 +79,7 @@ const views: Array<{
 export default function App() {
   const { language, setLanguage, t } = useI18n();
   const [sourceProject, setProject] = useState(sampleProject);
-  const [activeView, setActiveView] = useState<ViewId>('overview');
+  const [activeView, setActiveView] = useState<ViewId>('provider');
   const [selectedEntryId, setSelectedEntryId] = useState<string>('entry-send-message');
   const [selectedFlowId, setSelectedFlowId] = useState<string>('flow-chat');
   const [selectedNodeId, setSelectedNodeId] = useState<string>('chat-route');
@@ -235,8 +249,42 @@ export default function App() {
 
       <div className="workspace">
         <aside className="sidebar">
-          <p className="sidebar-title">{t('workspace')}</p>
-          {views.map((view) => {
+          <p className="sidebar-title">{t('newAnalysis')}</p>
+          {analysisViews.map((view) => {
+            const Icon = view.icon;
+            return (
+              <button
+                type="button"
+                className="nav-button"
+                key={view.id}
+                aria-current={activeView === view.id}
+                onClick={() => setActiveView(view.id)}
+              >
+                <Icon size={17} />
+                {t(view.labelKey)}
+              </button>
+            );
+          })}
+
+          <p className="sidebar-title">{t('currentRepository')}</p>
+          {repositoryViews.map((view) => {
+            const Icon = view.icon;
+            return (
+              <button
+                type="button"
+                className="nav-button"
+                key={view.id}
+                aria-current={activeView === view.id}
+                onClick={() => setActiveView(view.id)}
+              >
+                <Icon size={17} />
+                {t(view.labelKey)}
+              </button>
+            );
+          })}
+
+          <p className="sidebar-title">{t('repositoryLibrary')}</p>
+          {globalViews.map((view) => {
             const Icon = view.icon;
             return (
               <button
@@ -302,6 +350,9 @@ export default function App() {
             )}
             {activeView === 'provider' && (
               <ProviderPanel onAnalysisComplete={handleAnalysisComplete} />
+            )}
+            {activeView === 'repositories' && (
+              <RepositoryHistoryPanel onLoadProject={handleLoadHistoryProject} />
             )}
             {activeView === 'history' && (
               <HistoryPanel onLoadProject={handleLoadHistoryProject} />

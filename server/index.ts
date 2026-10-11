@@ -394,6 +394,60 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && req.url === '/api/repositories') {
+    const repositoryMap = new Map<string, {
+      repository: string;
+      name: string;
+      analysisCount: number;
+      latestJobId: string;
+      latestCommit: string;
+      latestCompletedAt: number;
+      providers: string[];
+      models: string[];
+      summary: string;
+    }>();
+
+    for (const job of Array.from(jobs.values())
+      .filter((item) => item.status === 'complete')
+      .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0))) {
+      const result = job.result as {
+        name?: string;
+        repository?: string;
+        commit?: string;
+        summary?: string;
+      } | undefined;
+      const repository = result?.repository ?? job.request.repoUrl;
+      const existing = repositoryMap.get(repository);
+
+      if (!existing) {
+        repositoryMap.set(repository, {
+          repository,
+          name: result?.name ?? repository,
+          analysisCount: 1,
+          latestJobId: job.id,
+          latestCommit: result?.commit ?? '',
+          latestCompletedAt: job.completedAt ?? 0,
+          providers: [job.request.provider],
+          models: [job.request.model],
+          summary: result?.summary ?? '',
+        });
+        continue;
+      }
+
+      existing.analysisCount += 1;
+      if (!existing.providers.includes(job.request.provider)) {
+        existing.providers.push(job.request.provider);
+      }
+      if (!existing.models.includes(job.request.model)) {
+        existing.models.push(job.request.model);
+      }
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(Array.from(repositoryMap.values())));
+    return;
+  }
+
   if (req.method === 'GET' && req.url === '/api/providers') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(publicProviders()));
