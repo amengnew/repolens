@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { toProject } from './analyze.ts';
+import { parseAIResponse, toProject } from './analyze.ts';
 
 const context = {
   owner: 'example',
@@ -103,4 +103,57 @@ test('uses repository file evidence when a quote is unavailable', () => {
   assert.equal(evidence?.confidence, 'doc verified');
   assert.ok(evidence?.code.includes('import express'));
   assert.equal(project.repository, 'github.com/example/agent-app');
+});
+
+test('accepts a valid structured AI response', () => {
+  const analysis = parseAIResponse(JSON.stringify({
+    name: 'agent-app',
+    summary: 'Example',
+    entries: [
+      {
+        name: 'Send message',
+        role: 'End user',
+        kind: 'http',
+        permissions: ['chat:create'],
+      },
+    ],
+    flows: [
+      { name: 'Chat flow', steps: ['Receive request', 'Call model'] },
+    ],
+    decisions: [
+      {
+        title: 'Context compression',
+        problem: 'Context is too long',
+        solution: 'Summarize older turns',
+        parameters: [{ key: 'Budget', value: '12000' }],
+      },
+    ],
+  }));
+
+  assert.equal(analysis.name, 'agent-app');
+  assert.equal(analysis.entries?.length, 1);
+  assert.equal(analysis.flows?.length, 1);
+  assert.equal(analysis.decisions?.length, 1);
+});
+
+test('rejects an invalid AI response entry kind', () => {
+  assert.throws(
+    () => parseAIResponse(JSON.stringify({
+      name: 'agent-app',
+      summary: 'Example',
+      entries: [{ name: 'Bad entry', role: 'End user', kind: 'grpc' }],
+    })),
+    /entry kind is invalid/,
+  );
+});
+
+test('rejects an AI response flow with malformed steps', () => {
+  assert.throws(
+    () => parseAIResponse(JSON.stringify({
+      name: 'agent-app',
+      summary: 'Example',
+      flows: [{ name: 'Bad flow', steps: 'Receive request' }],
+    })),
+    /requires a string array named steps/,
+  );
 });

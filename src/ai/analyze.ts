@@ -200,7 +200,30 @@ Return all user-facing text in ${language === 'zh' ? 'Simplified Chinese' : 'Eng
 Do not include Markdown fences.`;
 }
 
-function parseAIResponse(text: string): SimplifiedAnalysis {
+const validEntryKinds = ['http', 'ui', 'cli', 'event', 'job', 'tool', 'websocket'];
+const validRoles = ['End user', 'Admin', 'Developer', 'System', 'External service'];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireStringArray(record: Record<string, unknown>, key: string) {
+  if (record[key] === undefined) return;
+  if (!Array.isArray(record[key])) {
+    throw new Error(`AI response field ${key} must be an array`);
+  }
+  if ((record[key] as unknown[]).some((item) => typeof item !== 'string')) {
+    throw new Error(`AI response field ${key} must contain only strings`);
+  }
+}
+
+function requireOptionalString(record: Record<string, unknown>, key: string) {
+  if (record[key] !== undefined && typeof record[key] !== 'string') {
+    throw new Error(`AI response field ${key} must be a string`);
+  }
+}
+
+export function parseAIResponse(text: string): SimplifiedAnalysis {
   const trimmed = text.trim().replace(/^```json\s*/i, '').replace(/```$/i, '');
   const parsed = JSON.parse(trimmed);
   if (typeof parsed !== 'object' || parsed === null) throw new Error('AI response is not an object');
@@ -208,11 +231,77 @@ function parseAIResponse(text: string): SimplifiedAnalysis {
   if (typeof record.name !== 'string' || typeof record.summary !== 'string') {
     throw new Error('AI response is missing name or summary');
   }
-  for (const key of ['techStack', 'coreModules', 'importantFiles', 'entries', 'flows', 'decisions']) {
-    if (record[key] !== undefined && !Array.isArray(record[key])) {
-      throw new Error(`AI response field ${key} must be an array`);
+
+  for (const key of ['techStack', 'coreModules', 'importantFiles']) {
+    requireStringArray(record, key);
+  }
+
+  if (record.entries !== undefined) {
+    if (!Array.isArray(record.entries)) throw new Error('AI response field entries must be an array');
+    for (const entry of record.entries) {
+      if (!isRecord(entry)) throw new Error('Each AI response entry must be an object');
+      if (typeof entry.name !== 'string' || entry.name.length === 0) {
+        throw new Error('Each AI response entry requires a non-empty name');
+      }
+      if (!validRoles.includes(entry.role as string)) {
+        throw new Error(`AI response entry role is invalid: ${String(entry.role)}`);
+      }
+      if (!validEntryKinds.includes(entry.kind as string)) {
+        throw new Error(`AI response entry kind is invalid: ${String(entry.kind)}`);
+      }
+      requireOptionalString(entry, 'flowId');
+      requireOptionalString(entry, 'sourcePath');
+      requireOptionalString(entry, 'sourceQuote');
+      requireStringArray(entry, 'permissions');
     }
   }
+
+  if (record.flows !== undefined) {
+    if (!Array.isArray(record.flows)) throw new Error('AI response field flows must be an array');
+    for (const flow of record.flows) {
+      if (!isRecord(flow)) throw new Error('Each AI response flow must be an object');
+      if (typeof flow.name !== 'string' || flow.name.length === 0) {
+        throw new Error('Each AI response flow requires a non-empty name');
+      }
+      if (!Array.isArray(flow.steps) || flow.steps.some((step) => typeof step !== 'string')) {
+        throw new Error(`AI response flow ${String(flow.name)} requires a string array named steps`);
+      }
+      requireStringArray(flow, 'errorPaths');
+      requireOptionalString(flow, 'sourcePath');
+      requireOptionalString(flow, 'sourceQuote');
+    }
+  }
+
+  if (record.decisions !== undefined) {
+    if (!Array.isArray(record.decisions)) throw new Error('AI response field decisions must be an array');
+    for (const decision of record.decisions) {
+      if (!isRecord(decision)) throw new Error('Each AI response decision must be an object');
+      for (const key of ['title', 'problem', 'solution']) {
+        if (typeof decision[key] !== 'string' || (decision[key] as string).length === 0) {
+          throw new Error(`Each AI response decision requires a non-empty ${key}`);
+        }
+      }
+      if (decision.parameters !== undefined) {
+        if (!Array.isArray(decision.parameters)) {
+          throw new Error('AI response decision parameters must be an array');
+        }
+        for (const parameter of decision.parameters) {
+          if (
+            !isRecord(parameter) ||
+            typeof parameter.key !== 'string' ||
+            typeof parameter.value !== 'string'
+          ) {
+            throw new Error('Each AI response decision parameter requires key and value strings');
+          }
+        }
+      }
+      requireStringArray(decision, 'alternatives');
+      requireStringArray(decision, 'tradeoffs');
+      requireOptionalString(decision, 'sourcePath');
+      requireOptionalString(decision, 'sourceQuote');
+    }
+  }
+
   return record as SimplifiedAnalysis;
 }
 

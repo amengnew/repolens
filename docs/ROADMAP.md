@@ -255,6 +255,7 @@ Out of scope for MVP:
 - **Async analysis jobs added:** `/api/analyze` returns a job ID, `/api/analysis/:jobId` exposes progress and stage, and the provider panel polls status while showing a progress bar. The in-memory queue runs up to two analyses concurrently.
 - **Static analysis added:** The service now extracts Express-style and Python framework routes, Next.js App Router paths, Commander CLI commands, event handlers, cron/interval jobs, npm scripts, and dependency metadata before calling the model. The model receives these facts as high-confidence context.
 - **Provider key isolation added:** Model API keys live in analysis API environment variables. The browser no longer sends or stores provider keys.
+- **AI response schema validation added:** Entry roles and kinds, flow steps, decision fields, parameters, alternatives, trade-offs, and source references are validated before results enter the workspace. Unit tests cover valid and invalid responses.
 - The analysis API is zero-dependency Node HTTP in development, with Vite proxying `/api` requests to `http://127.0.0.1:3001`.
 
 ### M0: Product Foundation
