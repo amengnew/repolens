@@ -7,6 +7,7 @@ import { analyzeRepository } from '../src/ai/analyze.ts';
 const port = 3001;
 const dataDir = path.resolve(process.cwd(), '.data');
 const projectsFile = path.join(dataDir, 'projects.json');
+const jobsFile = path.join(dataDir, 'jobs.json');
 
 async function loadDotEnv() {
   try {
@@ -118,6 +119,45 @@ async function saveProject(key: string, project: unknown) {
   await writeFile(projectsFile, JSON.stringify(projects, null, 2), 'utf8');
 }
 
+async function ensureJobsStore() {
+  await mkdir(dataDir, { recursive: true });
+  try {
+    await readFile(jobsFile, 'utf8');
+  } catch {
+    await writeFile(jobsFile, '{}', 'utf8');
+  }
+}
+
+async function loadJobs() {
+  await ensureJobsStore();
+  const raw = await readFile(jobsFile, 'utf8');
+  const parsed = raw.trim()
+    ? JSON.parse(raw) as Record<string, AnalysisJob>
+    : {};
+  const now = Date.now();
+
+  for (const job of Object.values(parsed)) {
+    if (job.status === 'queued' || job.status === 'running') {
+      job.status = 'error';
+      job.error = 'Analysis service restarted before the job completed';
+      job.completedAt = now;
+    }
+    jobs.set(job.id, job);
+  }
+}
+
+async function saveJob(job: AnalysisJob) {
+  const raw = await readFile(jobsFile, 'utf8').catch(() => '{}');
+  let parsed: Record<string, AnalysisJob>;
+  try {
+    parsed = raw.trim() ? JSON.parse(raw) as Record<string, AnalysisJob> : {};
+  } catch {
+    parsed = {};
+  }
+  parsed[job.id] = job;
+  await writeFile(jobsFile, JSON.stringify(parsed, null, 2), 'utf8');
+}
+
 function cacheKey(input: AnalysisRequest, commit: string) {
   return [input.repoUrl, input.provider, input.model, commit, input.language].join('|');
 }
@@ -151,6 +191,7 @@ function createJob(request: AnalysisRequest): AnalysisJob {
   };
   jobs.set(job.id, job);
   jobQueue.push(job.id);
+  void saveJob(job);
   return job;
 }
 
@@ -194,10 +235,12 @@ async function runJob(jobId: string) {
     job.progress = 100;
     job.stage = job.request.language === 'zh' ? '分析完成' : 'Analysis complete';
     job.completedAt = Date.now();
+    void saveJob(job);
   } catch (error) {
     job.status = 'error';
     job.error = error instanceof Error ? error.message : 'Analysis failed';
     job.completedAt = Date.now();
+    void saveJob(job);
   } finally {
     activeJobCount -= 1;
     processQueue();
@@ -228,6 +271,31 @@ const server = createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to load projects' }));
     }
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/api/history') {
+    const history = Array.from(jobs.values())
+      .filter((job) => job.status === 'complete')
+      .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0))
+      .slice(0, 50)
+      .map((job) => {
+        const result = job.result as { name?: string; repository?: string; commit?: string; summary?: string } | undefined;
+        return {
+          jobId: job.id,
+          name: result?.name ?? job.request.repoUrl,
+          repository: result?.repository ?? job.request.repoUrl,
+          commit: result?.commit ?? '',
+          provider: job.request.provider,
+          model: job.request.model,
+          language: job.request.language,
+          completedAt: job.completedAt ?? 0,
+          summary: result?.summary ?? '',
+        };
+      });
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(history));
     return;
   }
 
@@ -263,6 +331,8 @@ const server = createServer(async (req, res) => {
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Not found' }));
 });
+
+await loadJobs();
 
 server.listen(port, () => {
   console.log(`RepoLens analysis API listening on http://127.0.0.1:${port}`);

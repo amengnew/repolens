@@ -4,6 +4,7 @@ import {
   GitBranch,
   LayoutDashboard,
   Lightbulb,
+  History,
   MessageSquare,
   Network,
   Route,
@@ -14,18 +15,20 @@ import { DecisionsPanel } from './components/DecisionsPanel';
 import { EntryMapPanel } from './components/EntryMapPanel';
 import { EvidencePanel } from './components/EvidencePanel';
 import { FlowExplorerPanel } from './components/FlowExplorerPanel';
+import { HistoryPanel } from './components/HistoryPanel';
 import { LearningPathPanel } from './components/LearningPathPanel';
 import { OverviewPanel } from './components/OverviewPanel';
 import { ProviderPanel } from './components/ProviderPanel';
 import { localizeProject } from './data/localizeProject';
 import { useI18n } from './i18n';
+import { getAnalysisJob } from './ai/client';
 import type { Project } from './types';
 
-type ViewId = 'overview' | 'entries' | 'flows' | 'decisions' | 'ask' | 'path' | 'provider';
+type ViewId = 'overview' | 'entries' | 'flows' | 'decisions' | 'ask' | 'path' | 'provider' | 'history';
 
 const views: Array<{
   id: ViewId;
-  labelKey: 'overview' | 'entries' | 'flows' | 'decisions' | 'ask' | 'path' | 'provider';
+  labelKey: 'overview' | 'entries' | 'flows' | 'decisions' | 'ask' | 'path' | 'provider' | 'history';
   icon: typeof LayoutDashboard;
 }> = [
   { id: 'overview', labelKey: 'overview', icon: LayoutDashboard },
@@ -35,6 +38,7 @@ const views: Array<{
   { id: 'ask', labelKey: 'ask', icon: MessageSquare },
   { id: 'path', labelKey: 'path', icon: Route },
   { id: 'provider', labelKey: 'provider', icon: Boxes },
+  { id: 'history', labelKey: 'history', icon: History },
 ];
 
 export default function App() {
@@ -175,6 +179,14 @@ export default function App() {
     setActiveView('overview');
   };
 
+  const handleLoadHistoryProject = async (jobId: string) => {
+    const job = await getAnalysisJob(jobId);
+    if (!job.result) {
+      throw new Error('History item does not contain a result');
+    }
+    handleAnalysisComplete(job.result);
+  };
+
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -269,6 +281,9 @@ export default function App() {
             )}
             {activeView === 'provider' && (
               <ProviderPanel onAnalysisComplete={handleAnalysisComplete} />
+            )}
+            {activeView === 'history' && (
+              <HistoryPanel onLoadProject={handleLoadHistoryProject} />
             )}
           </main>
 

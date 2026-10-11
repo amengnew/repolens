@@ -50,6 +50,29 @@ export async function getAnalysisJob(jobId: string): Promise<AnalysisJob> {
   return response.json();
 }
 
+export interface AnalysisHistoryItem {
+  jobId: string;
+  name: string;
+  repository: string;
+  commit: string;
+  provider: ProviderId;
+  model: string;
+  language: Language;
+  completedAt: number;
+  summary: string;
+}
+
+export async function getAnalysisHistory(): Promise<AnalysisHistoryItem[]> {
+  const response = await fetch('/api/history');
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Analysis history failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
 export function analyzeRepository(
   request: AnalyzeRequest,
   onProgress?: (progress: AnalysisProgress) => void,

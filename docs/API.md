@@ -75,6 +75,10 @@ Completed result:
 
 Returns cached analysis keys.
 
+### `GET /api/history`
+
+Returns the 50 most recently completed analysis jobs. Each item includes repository, commit, provider, model, language, completion time, and summary. Use `GET /api/analysis/:jobId` to load the full result.
+
 ## Caching
 
 Analysis results are cached by:

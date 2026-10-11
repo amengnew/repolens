@@ -82,6 +82,12 @@ await page.waitForTimeout(500);
 await expectVisible('.metric-card', 'Analysis result metrics');
 console.log('PASS: mock provider analysis updates the workspace');
 
+await page.getByRole('button', { name: '历史分析' }).click();
+await expectVisible('.path-item', 'Analysis history items');
+await page.locator('.path-check').first().click();
+await expectVisible('.metric-card', 'History project metrics');
+console.log('PASS: history project reloads into the workspace');
+
 console.log('PASS: evidence panel contains source-verified evidence');
 
 await browser.close();
