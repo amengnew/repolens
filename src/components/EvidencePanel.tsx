@@ -10,7 +10,13 @@ interface EvidencePanelProps {
 }
 
 export function EvidencePanel({ project, title, subtitle, evidenceIds }: EvidencePanelProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const confidenceLabels = {
+    'source verified': language === 'zh' ? '源码已验证' : 'source verified',
+    'doc verified': language === 'zh' ? '文档已验证' : 'doc verified',
+    inferred: language === 'zh' ? 'AI 推断' : 'inferred',
+    uncertain: language === 'zh' ? '低置信度' : 'uncertain',
+  } as const;
   const evidenceItems = evidenceIds
     .map((id) => project.evidence.find((item) => item.id === id))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -25,7 +31,7 @@ export function EvidencePanel({ project, title, subtitle, evidenceIds }: Evidenc
         {evidenceItems.length > 0 && (
           <span className={`confidence-badge ${evidenceItems[0].confidence === 'inferred' ? 'inferred' : ''}`}>
             <ShieldCheck size={12} />
-            {evidenceItems[0].confidence}
+            {confidenceLabels[evidenceItems[0].confidence]}
           </span>
         )}
       </div>

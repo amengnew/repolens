@@ -26,6 +26,8 @@ interface SimplifiedAnalysis {
     auth?: string;
     permissions?: string[];
     flowId?: string;
+    sourcePath?: string;
+    sourceQuote?: string;
   }>;
   flows?: Array<{
     id?: string;
@@ -34,6 +36,8 @@ interface SimplifiedAnalysis {
     description?: string;
     steps?: string[];
     errorPaths?: string[];
+    sourcePath?: string;
+    sourceQuote?: string;
   }>;
   decisions?: Array<{
     id?: string;
@@ -45,7 +49,24 @@ interface SimplifiedAnalysis {
     rationale?: string;
     alternatives?: string[];
     tradeoffs?: string[];
+    sourcePath?: string;
+    sourceQuote?: string;
   }>;
+}
+
+interface RepositoryFile {
+  path: string;
+  content: string;
+}
+
+interface RepositoryContext {
+  owner: string;
+  name: string;
+  description: string;
+  defaultBranch: string;
+  commit: string;
+  paths: string[];
+  selectedFiles: RepositoryFile[];
 }
 
 function parseGitHubUrl(url: string) {
@@ -54,7 +75,7 @@ function parseGitHubUrl(url: string) {
   return { owner: match[1], repo: match[2].replace(/\.git$/, '') };
 }
 
-async function fetchRepositoryContext(repoUrl: string) {
+async function fetchRepositoryContext(repoUrl: string): Promise<RepositoryContext> {
   const { owner, repo } = parseGitHubUrl(repoUrl);
   const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
   if (!repoResponse.ok) throw new Error(`GitHub repository request failed: ${repoResponse.status}`);
@@ -80,22 +101,34 @@ async function fetchRepositoryContext(repoUrl: string) {
     .filter(Boolean);
 
   const relevantExtensions = ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.java', '.md', '.json', '.yaml', '.yml'];
-  const relevantPaths = paths.filter((path: string) =>
+  const relevantPaths: string[] = paths.filter((path: string) =>
     relevantExtensions.some((extension) => path.endsWith(extension)) &&
     !path.includes('node_modules/') &&
     !path.includes('dist/'),
   );
-  const selectedPaths = relevantPaths.slice(0, 12);
+  const priorityPaths: Array<{ path: string; score: number }> = relevantPaths
+    .map((path: string) => {
+      let score = 0;
+      if (/readme/i.test(path)) score += 100;
+      if (/package\.json$|pyproject\.toml$|go\.mod$/.test(path)) score += 80;
+      if (/^(src|app|server|packages|apps)\//.test(path)) score += 50;
+      if (/(route|controller|server|entry|index|main|app)\./i.test(path)) score += 30;
+      if (/(test|spec|fixture|mock)\./i.test(path)) score -= 30;
+      return { path, score };
+    })
+    .sort((a, b) => b.score - a.score);
+  const selectedPaths = priorityPaths.slice(0, 16).map((item: { path: string }) => item.path);
 
   const filePromises = selectedPaths.map(async (path: string) => {
     const response = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${commit}/${path}`);
     if (!response.ok) return { path, content: '' };
     const text = await response.text();
-    return { path, content: text.slice(0, 6000) };
+    return { path, content: text.slice(0, 8000) };
   });
   const files = await Promise.all(filePromises);
 
   return {
+    owner,
     name: repoData.name ?? repo,
     description: repoData.description ?? '',
     defaultBranch: repoData.default_branch ?? 'main',
@@ -105,7 +138,7 @@ async function fetchRepositoryContext(repoUrl: string) {
   };
 }
 
-function buildPrompt(context: Awaited<ReturnType<typeof fetchRepositoryContext>>, language: Language) {
+function buildPrompt(context: RepositoryContext, language: Language) {
   return `You are analyzing the GitHub repository ${context.name}.
 
 Repository description: ${context.description}
@@ -120,12 +153,14 @@ Return only valid JSON with this exact shape:
   "techStack": string[],
   "coreModules": string[],
   "importantFiles": string[],
-  "entries": [{"id":string,"name":string,"role":string,"kind":"ui"|"http"|"cli"|"event"|"job"|"tool"|"websocket","input":string,"auth":string,"permissions":string[],"flowId":string}],
-  "flows": [{"id":string,"name":string,"trigger":string,"description":string,"steps":string[],"errorPaths":string[]}],
-  "decisions": [{"id":string,"title":string,"topic":string,"problem":string,"solution":string,"parameters":[{"key":string,"value":string}],"rationale":string,"alternatives":string[],"tradeoffs":string[]}]
+  "entries": [{"id":string,"name":string,"role":string,"kind":"ui"|"http"|"cli"|"event"|"job"|"tool"|"websocket","input":string,"auth":string,"permissions":string[],"flowId":string,"sourcePath":string,"sourceQuote":string}],
+  "flows": [{"id":string,"name":string,"trigger":string,"description":string,"steps":string[],"errorPaths":string[],"sourcePath":string,"sourceQuote":string}],
+  "decisions": [{"id":string,"title":string,"topic":string,"problem":string,"solution":string,"parameters":[{"key":string,"value":string}],"rationale":string,"alternatives":string[],"tradeoffs":string[],"sourcePath":string,"sourceQuote":string}]
 }
 
 Focus on user-facing entry points, the chain of logic they trigger, and engineering trade-offs.
+The role field must be one of: "End user", "Admin", "Developer", "System", "External service".
+Use sourcePath and sourceQuote only when the selected files contain the supporting code. sourceQuote must be copied verbatim from that file.
 Return all user-facing text in ${language === 'zh' ? 'Simplified Chinese' : 'English'}.
 Do not include Markdown fences.`;
 }
@@ -134,30 +169,147 @@ function parseAIResponse(text: string): SimplifiedAnalysis {
   const trimmed = text.trim().replace(/^```json\s*/i, '').replace(/```$/i, '');
   const parsed = JSON.parse(trimmed);
   if (typeof parsed !== 'object' || parsed === null) throw new Error('AI response is not an object');
-  return parsed as SimplifiedAnalysis;
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.name !== 'string' || typeof record.summary !== 'string') {
+    throw new Error('AI response is missing name or summary');
+  }
+  for (const key of ['techStack', 'coreModules', 'importantFiles', 'entries', 'flows', 'decisions']) {
+    if (record[key] !== undefined && !Array.isArray(record[key])) {
+      throw new Error(`AI response field ${key} must be an array`);
+    }
+  }
+  return record as SimplifiedAnalysis;
 }
 
-function toProject(analysis: SimplifiedAnalysis, context: Awaited<ReturnType<typeof fetchRepositoryContext>>): Project {
+function findEvidenceLocation(file: RepositoryFile, quote: string) {
+  const lines = file.content.split(/\r?\n/);
+  const normalizedQuote = quote.trim().replace(/\s+/g, ' ');
+
+  for (let start = 0; start < lines.length; start += 1) {
+    const windowSize = Math.min(lines.length, 12);
+    for (let size = 1; size <= windowSize; size += 1) {
+      const candidate = lines.slice(start, start + size).join(' ').replace(/\s+/g, ' ').trim();
+      if (candidate === normalizedQuote) {
+        return { startLine: start + 1, endLine: start + size, code: lines.slice(start, start + size).join('\n') };
+      }
+    }
+  }
+
+  return null;
+}
+
+function createEvidence(options: {
+  id: string;
+  label: string;
+  sourcePath?: string;
+  sourceQuote?: string;
+  context: RepositoryContext;
+}): { evidence: Project['evidence'][number] | null; index: number } {
+  if (!options.sourcePath) return { evidence: null, index: -1 };
+
+  const file = options.context.selectedFiles.find((item) => item.path === options.sourcePath);
+  if (!file) {
+    return {
+      evidence: {
+        id: options.id,
+        label: options.label,
+        file: options.sourcePath,
+        startLine: 1,
+        endLine: 1,
+        code: options.sourceQuote?.slice(0, 800) ?? 'Source quote unavailable.',
+        confidence: 'inferred',
+      },
+      index: 0,
+    };
+  }
+
+  if (options.sourceQuote) {
+    const location = findEvidenceLocation(file, options.sourceQuote);
+    if (location) {
+      return {
+        evidence: {
+          id: options.id,
+          label: options.label,
+          file: file.path,
+          ...location,
+          confidence: 'source verified',
+        },
+        index: 0,
+      };
+    }
+  }
+
+  return {
+    evidence: {
+      id: options.id,
+      label: options.label,
+      file: file.path,
+      startLine: 1,
+      endLine: Math.min(12, file.content.split(/\r?\n/).length),
+      code: file.content.split(/\r?\n/).slice(0, 12).join('\n'),
+      confidence: 'doc verified',
+    },
+    index: 0,
+  };
+}
+
+function appendEvidence(
+  evidence: Project['evidence'],
+  result: { evidence: Project['evidence'][number] | null; index: number },
+) {
+  if (!result.evidence) return [];
+  evidence.push(result.evidence);
+  return [result.evidence.id];
+}
+
+export function toProject(
+  analysis: SimplifiedAnalysis,
+  context: RepositoryContext,
+  language: Language,
+): Project {
+  const evidence: Project['evidence'] = [];
+
   const flows = (analysis.flows ?? []).map((flow, flowIndex) => {
+    const flowId = flow.id ?? `flow-${flowIndex}`;
+    const flowEvidence = createEvidence({
+      id: `ev-${flowId}`,
+      label: flow.name ?? `Flow ${flowIndex + 1}`,
+      sourcePath: flow.sourcePath,
+      sourceQuote: flow.sourceQuote,
+      context,
+    });
+    const flowEvidenceIds = appendEvidence(evidence, flowEvidence);
     const steps = flow.steps ?? [];
-    const nodes = steps.map((step, index) => ({
-      id: `${flow.id ?? `flow-${flowIndex}`}-node-${index}`,
+    const nodes = steps.map((step, index) => {
+      const nodeEvidence = createEvidence({
+        id: `ev-${flowId}-node-${index}`,
+        label: step,
+        sourcePath: flow.sourcePath,
+        sourceQuote: flow.sourceQuote,
+        context,
+      });
+      const evidenceIds = nodeEvidence.evidence
+        ? appendEvidence(evidence, nodeEvidence)
+        : flowEvidenceIds;
+      return {
+        id: `${flowId}-node-${index}`,
       label: step,
-      type: 'service' as Project['flows'][number]['nodes'][number]['type'],
+        type: 'service' as Project['flows'][number]['nodes'][number]['type'],
       description: step,
-      evidenceIds: [],
+        evidenceIds,
       decisionIds: [],
       position: { x: index * 220, y: 160 },
-    }));
+      };
+    });
     const edges = nodes.slice(0, -1).map((node, index) => ({
-      id: `${flow.id ?? `flow-${flowIndex}`}-edge-${index}`,
+      id: `${flowId}-edge-${index}`,
       source: node.id,
       target: nodes[index + 1].id,
       label: 'next',
       kind: 'call' as Project['flows'][number]['edges'][number]['kind'],
     }));
     return {
-      id: flow.id ?? `flow-${flowIndex}`,
+      id: flowId,
       name: flow.name ?? `Flow ${flowIndex + 1}`,
       trigger: flow.trigger ?? '',
       description: flow.description ?? '',
@@ -167,46 +319,110 @@ function toProject(analysis: SimplifiedAnalysis, context: Awaited<ReturnType<typ
     };
   });
 
-  const entries = (analysis.entries ?? []).map((entry, index) => ({
-    id: entry.id ?? `entry-${index}`,
-    name: entry.name ?? `Entry ${index + 1}`,
-    role: (entry.role as Project['entries'][number]['role']) ?? 'Developer',
-    kind: (entry.kind as Project['entries'][number]['kind']) ?? 'http',
-    input: entry.input ?? '',
-    auth: entry.auth ?? '',
-    permissions: entry.permissions ?? [],
-    flowId: entry.flowId ?? flows[0]?.id ?? '',
-    evidenceIds: [],
+  const entries = (analysis.entries ?? []).map((entry, index) => {
+    const entryEvidence = createEvidence({
+      id: `ev-entry-${entry.id ?? index}`,
+      label: entry.name ?? `Entry ${index + 1}`,
+      sourcePath: entry.sourcePath,
+      sourceQuote: entry.sourceQuote,
+      context,
+    });
+    return {
+      id: entry.id ?? `entry-${index}`,
+      name: entry.name ?? `Entry ${index + 1}`,
+      role: (entry.role as Project['entries'][number]['role']) ?? 'Developer',
+      kind: (entry.kind as Project['entries'][number]['kind']) ?? 'http',
+      input: entry.input ?? '',
+      auth: entry.auth ?? '',
+      permissions: entry.permissions ?? [],
+      flowId: entry.flowId ?? flows[0]?.id ?? '',
+      evidenceIds: appendEvidence(evidence, entryEvidence),
+    };
+  });
+
+  const decisions = (analysis.decisions ?? []).map((decision, index) => {
+    const decisionEvidence = createEvidence({
+      id: `ev-decision-${decision.id ?? index}`,
+      label: decision.title ?? `Decision ${index + 1}`,
+      sourcePath: decision.sourcePath,
+      sourceQuote: decision.sourceQuote,
+      context,
+    });
+    return {
+      id: decision.id ?? `decision-${index}`,
+      title: decision.title ?? `Decision ${index + 1}`,
+      topic: decision.topic ?? '',
+      problem: decision.problem ?? '',
+      solution: decision.solution ?? '',
+      parameters: decision.parameters ?? [],
+      rationale: decision.rationale ?? '',
+      alternatives: decision.alternatives ?? [],
+      tradeoffs: decision.tradeoffs ?? [],
+      evidenceIds: appendEvidence(evidence, decisionEvidence),
+    };
+  });
+
+  const askSamples = decisions.slice(0, 5).map((decision) => ({
+    question: decision.title,
+    answer: decision.solution,
+    evidenceIds: decision.evidenceIds,
   }));
 
-  const decisions = (analysis.decisions ?? []).map((decision, index) => ({
-    id: decision.id ?? `decision-${index}`,
-    title: decision.title ?? `Decision ${index + 1}`,
-    topic: decision.topic ?? '',
-    problem: decision.problem ?? '',
-    solution: decision.solution ?? '',
-    parameters: decision.parameters ?? [],
-    rationale: decision.rationale ?? '',
-    alternatives: decision.alternatives ?? [],
-    tradeoffs: decision.tradeoffs ?? [],
-    evidenceIds: [],
-  }));
+  const learningPath = [
+    {
+      id: 'ai-learning-entry',
+      title: language === 'zh' ? '入口速览' : 'Entry orientation',
+      duration: '15 min',
+      summary: analysis.summary ?? context.description,
+      relatedEntryIds: entries.slice(0, 3).map((entry) => entry.id),
+      relatedDecisionIds: decisions.slice(0, 2).map((decision) => decision.id),
+    },
+    {
+      id: 'ai-learning-decisions',
+      title: language === 'zh' ? '工程取舍阅读' : 'Engineering decision read',
+      duration: '45 min',
+      summary: analysis.summary ?? context.description,
+      relatedEntryIds: entries.slice(0, 2).map((entry) => entry.id),
+      relatedDecisionIds: decisions.slice(2, 5).map((decision) => decision.id),
+    },
+  ];
 
   return {
-    ...sampleProject,
     name: analysis.name ?? context.name,
-    repository: `github.com/${context.name}`,
+    repository: `github.com/${context.owner}/${context.name}`,
     commit: context.commit,
     summary: analysis.summary ?? context.description,
     techStack: analysis.techStack ?? [],
     coreModules: analysis.coreModules ?? [],
     importantFiles: analysis.importantFiles ?? context.selectedFiles.map((file) => file.path),
-    entries: entries.length > 0 ? entries : sampleProject.entries,
-    flows: flows.length > 0 ? flows : sampleProject.flows,
-    decisions: decisions.length > 0 ? decisions : sampleProject.decisions,
-    evidence: sampleProject.evidence,
-    askSamples: sampleProject.askSamples,
-    learningPath: sampleProject.learningPath,
+    complexity: [
+      {
+        label: language === 'zh' ? '入选文件' : 'Selected files',
+        value: String(context.selectedFiles.length),
+        detail: language === 'zh' ? '发送给模型参与分析的文件。' : 'Files sent to the model for analysis.',
+      },
+      {
+        label: language === 'zh' ? '入口数量' : 'Entries',
+        value: String(entries.length),
+        detail: language === 'zh' ? '模型提取的用户和系统入口。' : 'User and system entry points extracted by the model.',
+      },
+      {
+        label: language === 'zh' ? '链路数量' : 'Flows',
+        value: String(flows.length),
+        detail: language === 'zh' ? '模型提取的链式逻辑。' : 'Triggered chains of logic extracted by the model.',
+      },
+      {
+        label: language === 'zh' ? '证据数量' : 'Evidence',
+        value: String(evidence.length),
+        detail: language === 'zh' ? '从仓库文件生成的源码引用。' : 'Source references generated from repository files.',
+      },
+    ],
+    entries,
+    flows,
+    decisions,
+    evidence,
+    askSamples,
+    learningPath,
   };
 }
 
@@ -219,5 +435,5 @@ export async function analyzeRepository({ repoUrl, provider, apiKey, model, lang
   const prompt = buildPrompt(context, language);
   const responseText = await callAI({ provider, apiKey, model, prompt });
   const analysis = parseAIResponse(responseText);
-  return toProject(analysis, context);
+  return toProject(analysis, context, language);
 }

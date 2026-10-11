@@ -844,6 +844,11 @@ button {
   color: var(--amber);
 }
 
+.confidence-badge.uncertain {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
 .evidence-list {
   display: flex;
   flex-direction: column;

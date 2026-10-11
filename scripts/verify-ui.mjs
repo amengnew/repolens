@@ -70,7 +70,7 @@ await checkNoHorizontalOverflow('Learning path');
 await page.screenshot({ path: 'screenshots/path.png', fullPage: true });
 
 const evidenceBeforeAnalysis = (await page.locator('.evidence-panel').innerText()).toLowerCase();
-if (!evidenceBeforeAnalysis.includes('source verified')) {
+if (!/source verified|源码已验证/i.test(evidenceBeforeAnalysis)) {
   throw new Error('Evidence panel is missing source verification label');
 }
 console.log('PASS: evidence panel contains source-verified evidence');

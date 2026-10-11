@@ -251,6 +251,7 @@ Out of scope for MVP:
 - **M0 complete:** repository structure, TypeScript data model, and deterministic sample project are in place.
 - **M1 complete:** Overview, Entry Map, Flow Explorer, Engineering Decisions, Ask Repo, Learning Path, and evidence panel are interactive.
 - **M2 in progress:** GitHub repository ingestion, provider abstraction, a standalone `/api/analyze` service, request validation, commit pinning, and local JSON persistence are implemented. Remaining M2 work is PostgreSQL persistence, background job queue, and stronger source evidence extraction.
+- **Evidence extraction added:** AI responses now request `sourcePath` and `sourceQuote`; the service verifies quotes against fetched repository files and marks results as source verified, doc verified, or inferred. Unit tests cover all three cases.
 - The analysis API is zero-dependency Node HTTP in development, with Vite proxying `/api` requests to `http://127.0.0.1:3001`.
 
 ### M0: Product Foundation
