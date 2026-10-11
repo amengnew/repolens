@@ -83,3 +83,16 @@ Analysis results are cached by:
 `repoUrl|provider|model|commit|language`
 
 Repeated calls for the same repository, provider, model, commit, and language return the cached result without another model call.
+
+## Static analysis
+
+Before calling the model, the service extracts:
+
+- Express-style and Python framework routes
+- Next.js App Router route paths
+- Commander-style CLI commands
+- Event handlers
+- Cron and interval jobs
+- npm scripts and dependency metadata
+
+These facts are passed to the model as high-confidence context for entry and flow extraction.

@@ -9,6 +9,14 @@ const context = {
   defaultBranch: 'main',
   commit: 'abc123',
   paths: ['src/index.ts'],
+  staticAnalysis: {
+    routes: [],
+    commands: [],
+    eventHandlers: [],
+    jobs: [],
+    dependencies: {},
+    scripts: {},
+  },
   selectedFiles: [
     {
       path: 'src/index.ts',

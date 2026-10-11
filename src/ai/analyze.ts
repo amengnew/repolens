@@ -2,6 +2,7 @@ import type { Project } from '../types.ts';
 import type { Language } from '../i18n.tsx';
 import { sampleProject } from '../data/sampleProject.ts';
 import { callAI, type ProviderId } from './providers.ts';
+import { analyzeStaticFiles, type StaticAnalysisResult } from './staticAnalysis.ts';
 
 export interface AnalyzeOptions {
   repoUrl: string;
@@ -73,6 +74,7 @@ interface RepositoryContext {
   commit: string;
   paths: string[];
   selectedFiles: RepositoryFile[];
+  staticAnalysis: StaticAnalysisResult;
 }
 
 function parseGitHubUrl(url: string) {
@@ -153,6 +155,8 @@ async function fetchRepositoryContext(
   });
   const files = await Promise.all(filePromises);
 
+  const staticAnalysis = analyzeStaticFiles(files);
+
   return {
     owner,
     name: repoData.name ?? repo,
@@ -161,6 +165,7 @@ async function fetchRepositoryContext(
     commit,
     paths,
     selectedFiles: files,
+    staticAnalysis,
   };
 }
 
@@ -171,6 +176,9 @@ Repository description: ${context.description}
 
 Selected files:
 ${context.selectedFiles.map((file) => `\n--- ${file.path} ---\n${file.content}`).join('\n')}
+
+Static analysis result:
+${JSON.stringify(context.staticAnalysis, null, 2)}
 
 Return only valid JSON with this exact shape:
 {
@@ -185,6 +193,7 @@ Return only valid JSON with this exact shape:
 }
 
 Focus on user-facing entry points, the chain of logic they trigger, and engineering trade-offs.
+Use the static analysis result as high-confidence evidence for routes, commands, event handlers, and jobs. Prefer these entries over inferred ones.
 The role field must be one of: "End user", "Admin", "Developer", "System", "External service".
 Use sourcePath and sourceQuote only when the selected files contain the supporting code. sourceQuote must be copied verbatim from that file.
 Return all user-facing text in ${language === 'zh' ? 'Simplified Chinese' : 'English'}.
