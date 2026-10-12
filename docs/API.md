@@ -91,6 +91,8 @@ Returns provider runtime configuration, including available models, endpoint, en
 
 Configures a provider API key. By default the key is persisted to the local `.env` file; send `persist: false` to update only the current server process.
 
+For the custom OpenAI-compatible provider, the request also includes `endpoint`. The endpoint is persisted as `CUSTOM_AI_ENDPOINT`, and requests use `Authorization: Bearer <CUSTOM_AI_API_KEY>`.
+
 ### `POST /api/provider/test`
 
 Tests provider connectivity with a selected model. Returns success, latency, and a response preview, or a structured error.

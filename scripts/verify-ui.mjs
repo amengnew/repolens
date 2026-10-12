@@ -82,6 +82,10 @@ console.log('PASS: evidence panel contains source-verified evidence');
 
 await page.getByRole('button', { name: '新分析' }).click();
 await expectVisible('.filter-button', 'Provider options');
+await page.getByRole('button', { name: '自定义供应商' }).click();
+await expectVisible('#provider-endpoint', 'Custom provider endpoint');
+await expectVisible('#api-key', 'Custom provider key');
+console.log('PASS: custom provider endpoint and key fields are available');
 await page.getByRole('button', { name: 'OpenAI' }).click();
 await page.getByRole('button', { name: '保存并测试' }).click();
 await expectVisible('#api-key', 'Provider key input');

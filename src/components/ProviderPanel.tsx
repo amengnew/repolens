@@ -22,6 +22,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
   const [model, setModel] = useState(providers[0].defaultModel);
   const [providerConfigs, setProviderConfigs] = useState<ProviderRuntimeConfig[] | null>(null);
   const [apiKey, setApiKey] = useState('');
+  const [endpoint, setEndpoint] = useState('');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [progress, setProgress] = useState(0);
@@ -37,6 +38,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
         setProviderConfigs(configs);
         const initial = configs.find((item) => item.id === provider) ?? configs[0];
         if (initial) setModel(initial.defaultModel);
+        if (initial?.id === 'custom') setEndpoint(initial.endpoint);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -58,6 +60,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
     deepseek: 'DeepSeek',
     anthropic: 'Anthropic',
     gemini: 'Gemini',
+    custom: language === 'zh' ? '自定义供应商' : 'Custom provider',
   };
 
   const handleProviderChange = (nextProvider: ProviderId) => {
@@ -67,6 +70,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
     setConnectionMessage('');
     const nextConfig = providerConfigs?.find((item) => item.id === nextProvider);
     setModel(nextConfig?.defaultModel ?? providers.find((item) => item.id === nextProvider)?.defaultModel ?? '');
+    setEndpoint(nextProvider === 'custom' ? nextConfig?.endpoint ?? '' : '');
   };
 
   const handleSaveAndTest = async () => {
@@ -78,6 +82,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
         await configureProvider({
           provider,
           apiKey: apiKey.trim(),
+          endpoint: provider === 'custom' ? endpoint.trim() : undefined,
           persist: true,
         });
       }
@@ -86,6 +91,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
         provider,
         model,
         apiKey: apiKey.trim() || undefined,
+        endpoint: provider === 'custom' ? endpoint.trim() || undefined : undefined,
       });
       const configs = await getProviderConfigs();
       setProviderConfigs(configs);
@@ -161,6 +167,24 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
           })}
         </div>
       </section>
+
+      {provider === 'custom' && (
+        <section className="panel-section">
+          <div className="list-panel">
+            <h2 className="panel-heading">{t('requestEndpoint')}</h2>
+            <label className="detail-label" htmlFor="provider-endpoint">{t('requestEndpoint')}</label>
+            <input
+              id="provider-endpoint"
+              type="url"
+              value={endpoint}
+              placeholder="https://api.example.com/chat/completions"
+              onChange={(event) => setEndpoint(event.target.value)}
+              className="text-input"
+            />
+            <p className="path-summary">{t('customProviderEndpointHint')}</p>
+          </div>
+        </section>
+      )}
 
       <section className={provider === 'mock' ? 'panel-section' : 'panel-section two-column'}>
         <div className="list-panel">

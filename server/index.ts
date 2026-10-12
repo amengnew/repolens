@@ -80,7 +80,7 @@ function parseRequest(body: string): AnalysisRequest {
   if (typeof repoUrl !== 'string' || !/^https:\/\/github\.com\/[^/]+\/[^/]+/.test(repoUrl)) {
     throw new Error('repoUrl must be a GitHub repository URL');
   }
-  if (!['mock', 'openai', 'deepseek', 'anthropic', 'gemini'].includes(provider ?? '')) {
+  if (!providers.some((item) => item.id === provider)) {
     throw new Error('provider is invalid');
   }
   if (typeof model !== 'string' || model.trim().length === 0) {
@@ -99,11 +99,25 @@ const providerEnvKeys: Record<ProviderId, string | null> = {
   deepseek: 'DEEPSEEK_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
   gemini: 'GEMINI_API_KEY',
+  custom: 'CUSTOM_AI_API_KEY',
 };
 
 function providerApiKey(provider: ProviderId) {
   const envKey = providerEnvKeys[provider];
   return envKey ? process.env[envKey] ?? '' : '';
+}
+
+function customEndpoint() {
+  return process.env.CUSTOM_AI_ENDPOINT ?? '';
+}
+
+function validEndpoint(endpoint: string) {
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 async function saveEnvValue(envKey: string, value: string) {
@@ -133,9 +147,12 @@ function publicProviders() {
     label: provider.label,
     defaultModel: provider.defaultModel,
     models: provider.models,
-    endpoint: provider.endpoint,
+    endpoint: provider.id === 'custom' ? customEndpoint() : provider.endpoint,
     envKey: providerEnvKeys[provider.id],
-    configured: provider.id === 'mock' || providerApiKey(provider.id).length > 0,
+    configured: provider.id === 'mock' ||
+      (provider.id === 'custom'
+        ? customEndpoint().length > 0 && providerApiKey('custom').length > 0
+        : providerApiKey(provider.id).length > 0),
   }));
 }
 
@@ -154,6 +171,7 @@ function parseProviderRequest(body: string) {
     provider: provider as ProviderId,
     model: typeof parsed.model === 'string' ? parsed.model : '',
     apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : '',
+    endpoint: typeof parsed.endpoint === 'string' ? parsed.endpoint : '',
     persist: parsed.persist !== false,
   };
 }
@@ -237,6 +255,10 @@ function publicJob(job: AnalysisJob) {
 }
 
 function createJob(request: AnalysisRequest): AnalysisJob {
+  if (request.provider === 'custom' && !validEndpoint(customEndpoint())) {
+    throw new Error('CUSTOM_AI_ENDPOINT must be configured as a valid HTTP(S) URL');
+  }
+
   if (request.provider !== 'mock' && providerApiKey(request.provider).length === 0) {
     throw new Error(`${providerEnvKeys[request.provider]} is not configured`);
   }
@@ -289,6 +311,7 @@ async function runJob(jobId: string) {
     const project = await analyzeRepository({
       ...job.request,
       apiKey: providerApiKey(job.request.provider),
+      endpoint: job.request.provider === 'custom' ? customEndpoint() : undefined,
       onProgress: (progress) => {
       job.progress = Math.max(job.progress, progress.progress);
       job.stage = progress.stage;
@@ -476,9 +499,25 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      let nextEndpoint = customEndpoint();
+      if (input.provider === 'custom') {
+        nextEndpoint = input.endpoint.trim();
+        if (!validEndpoint(nextEndpoint)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'A valid HTTP(S) endpoint is required' }));
+          return;
+        }
+      }
+
       process.env[envKey] = input.apiKey.trim();
+      if (input.provider === 'custom') {
+        process.env.CUSTOM_AI_ENDPOINT = nextEndpoint;
+      }
       if (input.persist) {
         await saveEnvValue(envKey, input.apiKey.trim());
+        if (input.provider === 'custom') {
+          await saveEnvValue('CUSTOM_AI_ENDPOINT', nextEndpoint);
+        }
       }
 
       log('provider:configured', {
@@ -493,6 +532,7 @@ const server = createServer(async (req, res) => {
         envKey,
         configured: true,
         persisted: input.persist,
+        endpoint: input.provider === 'custom' ? nextEndpoint : undefined,
       }));
     } catch (error) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -514,6 +554,13 @@ const server = createServer(async (req, res) => {
         throw new Error(`${providerEnvKeys[input.provider]} is not configured`);
       }
 
+      const endpoint = input.provider === 'custom'
+        ? input.endpoint.trim() || customEndpoint()
+        : undefined;
+      if (input.provider === 'custom' && !validEndpoint(endpoint ?? '')) {
+        throw new Error('CUSTOM_AI_ENDPOINT must be configured as a valid HTTP(S) URL');
+      }
+
       log('provider:test:started', {
         provider: input.provider,
         model: input.model,
@@ -524,6 +571,7 @@ const server = createServer(async (req, res) => {
         apiKey,
         model: input.model,
         prompt: 'Reply with exactly: connected',
+        endpoint,
       });
       const latencyMs = Date.now() - startedAt;
 

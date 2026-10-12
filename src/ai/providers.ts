@@ -1,4 +1,4 @@
-export type ProviderId = 'mock' | 'openai' | 'deepseek' | 'anthropic' | 'gemini';
+export type ProviderId = 'mock' | 'openai' | 'deepseek' | 'anthropic' | 'gemini' | 'custom';
 
 export interface ProviderConfig {
   id: ProviderId;
@@ -44,6 +44,13 @@ export const providers: ProviderConfig[] = [
     models: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash'],
     endpoint: 'https://generativelanguage.googleapis.com/v1beta/models',
   },
+  {
+    id: 'custom',
+    label: 'Custom OpenAI-compatible',
+    defaultModel: '',
+    models: [],
+    endpoint: '',
+  },
 ];
 
 export interface CallAIOptions {
@@ -51,15 +58,26 @@ export interface CallAIOptions {
   apiKey: string;
   model: string;
   prompt: string;
+  endpoint?: string;
 }
 
-export async function callAI({ provider, apiKey, model, prompt }: CallAIOptions): Promise<string> {
+export async function callAI({ provider, apiKey, model, prompt, endpoint }: CallAIOptions): Promise<string> {
   if (provider === 'mock') {
     return JSON.stringify({ note: 'Mock provider returns the local sample project.' });
   }
 
-  if (provider === 'openai' || provider === 'deepseek') {
-    const response = await fetch(provider === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.deepseek.com/chat/completions', {
+  if (provider === 'openai' || provider === 'deepseek' || provider === 'custom') {
+    if (provider === 'custom' && !endpoint) {
+      throw new Error('Custom provider endpoint is required');
+    }
+
+    const requestUrl: string = provider === 'openai'
+      ? 'https://api.openai.com/v1/chat/completions'
+      : provider === 'deepseek'
+        ? 'https://api.deepseek.com/chat/completions'
+        : endpoint ?? '';
+
+    const response = await fetch(requestUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

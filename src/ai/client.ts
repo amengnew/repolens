@@ -120,8 +120,9 @@ export async function getProviderConfigs(): Promise<ProviderRuntimeConfig[]> {
 export async function configureProvider(request: {
   provider: ProviderId;
   apiKey: string;
+  endpoint?: string;
   persist?: boolean;
-}): Promise<{ configured: boolean; persisted: boolean; envKey: string }> {
+}): Promise<{ configured: boolean; persisted: boolean; envKey: string; endpoint?: string }> {
   const response = await fetch('/api/provider/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -140,6 +141,7 @@ export async function testProvider(request: {
   provider: ProviderId;
   model: string;
   apiKey?: string;
+  endpoint?: string;
 }): Promise<{
   ok: boolean;
   provider: ProviderId;
