@@ -111,11 +111,9 @@ await page.getByRole('button', { name: '分析仓库' }).click();
 await page.waitForTimeout(500);
 await expectVisible('.metric-card', 'Second analysis metrics');
 
-await page.getByRole('button', { name: '对比' }).click();
-await expectVisible('.compare-select', 'Comparison selectors');
-await page.getByRole('button', { name: '对比分析' }).click();
-await expectVisible('.metric-card', 'Comparison result metrics');
-console.log('PASS: analysis comparison renders differences');
+await page.getByRole('button', { name: '历史分析' }).click();
+await expectVisible('.path-item', 'Current repository history items');
+console.log('PASS: current repository history stays scoped to the repository');
 
 console.log('PASS: evidence panel contains source-verified evidence');
 

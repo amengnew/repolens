@@ -2,7 +2,6 @@ import type { Project } from '../types';
 import type { ProviderId } from './providers';
 import type { Language } from '../i18n';
 import type { AnalysisProgress } from './analyze';
-import type { ComparisonResult } from './comparison';
 
 export interface AnalyzeRequest {
   repoUrl: string;
@@ -92,22 +91,6 @@ export async function getRepositoryHistory(): Promise<RepositoryHistoryItem[]> {
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Repository history failed: ${response.status}`);
-  }
-
-  return response.json();
-}
-
-export async function compareAnalyses(
-  baseJobId: string,
-  targetJobId: string,
-): Promise<ComparisonResult> {
-  const response = await fetch(
-    `/api/compare/${encodeURIComponent(baseJobId)}/${encodeURIComponent(targetJobId)}`,
-  );
-
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || `Analysis comparison failed: ${response.status}`);
   }
 
   return response.json();

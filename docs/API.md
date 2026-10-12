@@ -97,10 +97,6 @@ Tests provider connectivity with a selected model. Returns success, latency, and
 
 The server emits structured JSON logs for provider configuration, provider tests, analysis queueing, progress, cache hits, completion, and failures.
 
-### `GET /api/compare/:baseJobId/:targetJobId`
-
-Compares two completed analyses and returns metadata plus added, removed, changed, and unchanged entries, flows, and engineering decisions.
-
 ## Caching
 
 Analysis results are cached by:

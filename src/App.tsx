@@ -3,7 +3,6 @@ import {
   Boxes,
   Database,
   GitBranch,
-  GitCompare,
   LayoutDashboard,
   Lightbulb,
   History,
@@ -18,7 +17,6 @@ import { EntryMapPanel } from './components/EntryMapPanel';
 import { EvidencePanel } from './components/EvidencePanel';
 import { FlowExplorerPanel } from './components/FlowExplorerPanel';
 import { HistoryPanel } from './components/HistoryPanel';
-import { ComparePanel } from './components/ComparePanel';
 import { LearningPathPanel } from './components/LearningPathPanel';
 import { OverviewPanel } from './components/OverviewPanel';
 import { ProviderPanel } from './components/ProviderPanel';
@@ -37,8 +35,7 @@ type ViewId =
   | 'path'
   | 'provider'
   | 'repositories'
-  | 'history'
-  | 'compare';
+  | 'history';
 
 interface ViewConfig {
   id: ViewId;
@@ -51,7 +48,6 @@ interface ViewConfig {
     | 'path'
     | 'provider'
     | 'history'
-    | 'compare'
     | 'newAnalysis'
     | 'globalRepositoryHistory';
   icon: typeof LayoutDashboard;
@@ -68,12 +64,11 @@ const repositoryViews: ViewConfig[] = [
   { id: 'decisions', labelKey: 'decisions', icon: Lightbulb },
   { id: 'ask', labelKey: 'ask', icon: MessageSquare },
   { id: 'path', labelKey: 'path', icon: Route },
+  { id: 'history', labelKey: 'history', icon: History },
 ];
 
 const globalViews: ViewConfig[] = [
   { id: 'repositories', labelKey: 'globalRepositoryHistory', icon: Database },
-  { id: 'history', labelKey: 'history', icon: History },
-  { id: 'compare', labelKey: 'compare', icon: GitCompare },
 ];
 
 export default function App() {
@@ -355,9 +350,8 @@ export default function App() {
               <RepositoryHistoryPanel onLoadProject={handleLoadHistoryProject} />
             )}
             {activeView === 'history' && (
-              <HistoryPanel onLoadProject={handleLoadHistoryProject} />
+              <HistoryPanel project={project} onLoadProject={handleLoadHistoryProject} />
             )}
-            {activeView === 'compare' && <ComparePanel />}
           </main>
 
           <EvidencePanel

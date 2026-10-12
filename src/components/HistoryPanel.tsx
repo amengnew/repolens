@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { Clock, FileCode2, History, RefreshCw } from 'lucide-react';
 import { getAnalysisHistory, type AnalysisHistoryItem } from '../ai/client';
 import { useI18n } from '../i18n';
+import type { Project } from '../types';
 
 interface HistoryPanelProps {
+  project: Project;
   onLoadProject: (jobId: string) => Promise<void>;
 }
 
-export function HistoryPanel({ onLoadProject }: HistoryPanelProps) {
+export function HistoryPanel({ project, onLoadProject }: HistoryPanelProps) {
   const { t, language } = useI18n();
   const [items, setItems] = useState<AnalysisHistoryItem[] | null>(null);
   const [error, setError] = useState('');
@@ -17,7 +19,9 @@ export function HistoryPanel({ onLoadProject }: HistoryPanelProps) {
 
     getAnalysisHistory()
       .then((historyItems) => {
-        if (!cancelled) setItems(historyItems);
+        if (!cancelled) {
+          setItems(historyItems.filter((item) => item.repository === project.repository));
+        }
       })
       .catch((loadError) => {
         if (!cancelled) {
@@ -29,7 +33,7 @@ export function HistoryPanel({ onLoadProject }: HistoryPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [project.repository]);
 
   const formatDate = (timestamp: number) =>
     new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
