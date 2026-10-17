@@ -3,7 +3,13 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { analyzeRepository } from '../src/ai/analyze.ts';
-import { callAI, providers, type ProviderId } from '../src/ai/providers.ts';
+import {
+  callAI,
+  fetchModels,
+  providers,
+  type ProviderConfig,
+  type ProviderId,
+} from '../src/ai/providers.ts';
 
 const port = 3001;
 const dataDir = path.resolve(process.cwd(), '.data');
@@ -102,6 +108,28 @@ const providerEnvKeys: Record<ProviderId, string | null> = {
   custom: 'CUSTOM_AI_API_KEY',
 };
 
+const providerModelEnvKeys: Record<ProviderId, string | null> = {
+  mock: null,
+  openai: 'OPENAI_MODEL',
+  deepseek: 'DEEPSEEK_MODEL',
+  anthropic: 'ANTHROPIC_MODEL',
+  gemini: 'GEMINI_MODEL',
+  custom: 'CUSTOM_AI_MODEL',
+};
+
+function providerModel(provider: ProviderId) {
+  const envKey = providerModelEnvKeys[provider];
+  return envKey ? process.env[envKey] ?? '' : '';
+}
+
+function providerModelOptions(provider: ProviderConfig) {
+  const savedModel = providerModel(provider.id);
+  if (savedModel && !provider.models.includes(savedModel)) {
+    return [savedModel, ...provider.models];
+  }
+  return provider.models;
+}
+
 function providerApiKey(provider: ProviderId) {
   const envKey = providerEnvKeys[provider];
   return envKey ? process.env[envKey] ?? '' : '';
@@ -145,8 +173,8 @@ function publicProviders() {
   return providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
-    defaultModel: provider.defaultModel,
-    models: provider.models,
+    defaultModel: providerModel(provider.id) || provider.defaultModel,
+    models: providerModelOptions(provider),
     endpoint: provider.id === 'custom' ? customEndpoint() : provider.endpoint,
     envKey: providerEnvKeys[provider.id],
     configured: provider.id === 'mock' ||
@@ -493,30 +521,39 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      if (input.apiKey.trim().length === 0) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'API key is required' }));
-        return;
+      const selectedApiKey = input.apiKey.trim();
+      if (selectedApiKey.length === 0 && providerApiKey(input.provider).length === 0) {
+        throw new Error('API key is required');
       }
 
       let nextEndpoint = customEndpoint();
       if (input.provider === 'custom') {
-        nextEndpoint = input.endpoint.trim();
+        nextEndpoint = input.endpoint.trim() || nextEndpoint;
         if (!validEndpoint(nextEndpoint)) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'A valid HTTP(S) endpoint is required' }));
-          return;
+          throw new Error('A valid HTTP(S) endpoint is required');
         }
       }
 
-      process.env[envKey] = input.apiKey.trim();
+      if (selectedApiKey) {
+        process.env[envKey ?? ''] = selectedApiKey;
+      }
       if (input.provider === 'custom') {
         process.env.CUSTOM_AI_ENDPOINT = nextEndpoint;
       }
+      const nextModel = input.model.trim();
+      const modelEnvKey = providerModelEnvKeys[input.provider];
+      if (nextModel && modelEnvKey) {
+        process.env[modelEnvKey] = nextModel;
+      }
       if (input.persist) {
-        await saveEnvValue(envKey, input.apiKey.trim());
+        if (selectedApiKey && envKey) {
+          await saveEnvValue(envKey, selectedApiKey);
+        }
         if (input.provider === 'custom') {
           await saveEnvValue('CUSTOM_AI_ENDPOINT', nextEndpoint);
+        }
+        if (nextModel && modelEnvKey) {
+          await saveEnvValue(modelEnvKey, nextModel);
         }
       }
 
@@ -532,11 +569,71 @@ const server = createServer(async (req, res) => {
         envKey,
         configured: true,
         persisted: input.persist,
+        model: nextModel,
         endpoint: input.provider === 'custom' ? nextEndpoint : undefined,
       }));
     } catch (error) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Provider configuration failed' }));
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/providers/models') {
+    const startedAt = Date.now();
+    try {
+      const input = parseProviderRequest(await readBody(req));
+      const apiKey = input.apiKey.trim() || providerApiKey(input.provider);
+      if (input.provider !== 'mock' && apiKey.length === 0) {
+        throw new Error(`${providerEnvKeys[input.provider]} is not configured`);
+      }
+
+      const endpoint = input.provider === 'custom'
+        ? input.endpoint.trim() || customEndpoint()
+        : undefined;
+      if (input.provider === 'custom' && !validEndpoint(endpoint ?? '')) {
+        throw new Error('CUSTOM_AI_ENDPOINT must be configured as a valid HTTP(S) URL');
+      }
+
+      log('provider:models:started', {
+        provider: input.provider,
+      });
+
+      const models = await fetchModels({
+        provider: input.provider,
+        apiKey,
+        endpoint,
+      });
+      const latencyMs = Date.now() - startedAt;
+
+      log('provider:models:complete', {
+        provider: input.provider,
+        modelCount: models.length,
+        latencyMs,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        provider: input.provider,
+        models,
+        latencyMs,
+      }));
+    } catch (error) {
+      const latencyMs = Date.now() - startedAt;
+      const message = error instanceof Error ? error.message : 'Model fetch failed';
+
+      log('provider:models:error', {
+        provider: 'unknown',
+        error: message,
+        latencyMs,
+      });
+
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok: false,
+        error: message,
+        latencyMs,
+      }));
     }
     return;
   }

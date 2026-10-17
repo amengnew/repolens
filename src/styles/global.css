@@ -433,6 +433,18 @@ button {
   color: var(--accent);
 }
 
+.filter-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
 .role-group {
   margin-bottom: 24px;
 }

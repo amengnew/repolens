@@ -61,6 +61,108 @@ export interface CallAIOptions {
   endpoint?: string;
 }
 
+export interface FetchModelsOptions {
+  provider: ProviderId;
+  apiKey: string;
+  endpoint?: string;
+}
+
+function modelIdsFromData(data: unknown, useName = false): string[] {
+  const payload = data as { data?: unknown; models?: unknown };
+  const items = Array.isArray(payload.data) ? payload.data
+    : Array.isArray(payload.models) ? payload.models
+      : [];
+  const ids = items.map((item) => {
+    if (typeof item === 'string') return item;
+    const candidate = item as { id?: unknown; name?: unknown };
+    const value = useName ? candidate.name : candidate.id;
+    return typeof value === 'string' ? value : '';
+  }).filter((value) => value.length > 0);
+  return [...new Set(ids)].sort();
+}
+
+function geminiModelIds(data: unknown): string[] {
+  const payload = data as { models?: Array<{ name?: unknown; supportedGenerationMethods?: unknown }> };
+  const models = Array.isArray(payload.models) ? payload.models : [];
+  return [...new Set(models.flatMap((model) => {
+    const methods = model.supportedGenerationMethods;
+    if (Array.isArray(methods) && methods.length > 0 && !methods.includes('generateContent')) {
+      return [];
+    }
+    return typeof model.name === 'string' ? [model.name.replace(/^models\//, '')] : [];
+  }))].sort();
+}
+
+export function chatCompletionsToModelsUrl(endpoint: string): string {
+  const url = new URL(endpoint);
+  let pathname = url.pathname.replace(/\/+$/, '');
+  if (pathname.endsWith('/chat/completions')) {
+    pathname = pathname.slice(0, -'/chat/completions'.length);
+  }
+  url.pathname = `${pathname}/models`.replace(/\/{2,}/g, '/');
+  url.search = '';
+  return url.toString();
+}
+
+async function fetchOpenAICompatibleModels(url: string, apiKey: string): Promise<string[]> {
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Model fetch failed: ${response.status} ${errorBody.slice(0, 300)}`);
+  }
+  return modelIdsFromData(await response.json());
+}
+
+export async function fetchModels({ provider, apiKey, endpoint }: FetchModelsOptions): Promise<string[]> {
+  if (provider === 'mock') {
+    return providers.find((item) => item.id === 'mock')?.models.slice() ?? ['sample'];
+  }
+
+  if (provider === 'openai') {
+    return fetchOpenAICompatibleModels('https://api.openai.com/v1/models', apiKey);
+  }
+
+  if (provider === 'deepseek') {
+    return fetchOpenAICompatibleModels('https://api.deepseek.com/models', apiKey);
+  }
+
+  if (provider === 'custom') {
+    if (!endpoint) {
+      throw new Error('Custom provider endpoint is required');
+    }
+    return fetchOpenAICompatibleModels(chatCompletionsToModelsUrl(endpoint), apiKey);
+  }
+
+  if (provider === 'anthropic') {
+    const response = await fetch('https://api.anthropic.com/v1/models', {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+    });
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Model fetch failed: ${response.status} ${errorBody.slice(0, 300)}`);
+    }
+    return modelIdsFromData(await response.json());
+  }
+
+  if (provider === 'gemini') {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+    );
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Model fetch failed: ${response.status} ${errorBody.slice(0, 300)}`);
+    }
+    return geminiModelIds(await response.json());
+  }
+
+  throw new Error(`Unsupported provider: ${provider}`);
+}
+
 export async function callAI({ provider, apiKey, model, prompt, endpoint }: CallAIOptions): Promise<string> {
   if (provider === 'mock') {
     return JSON.stringify({ note: 'Mock provider returns the local sample project.' });

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Play, PlugZap, Settings2 } from 'lucide-react';
+import { Loader2, Play, PlugZap, RefreshCw, Settings2 } from 'lucide-react';
 import {
   analyzeRepository,
   configureProvider,
+  fetchProviderModels,
   getProviderConfigs,
   testProvider,
   type ProviderRuntimeConfig,
@@ -28,6 +29,8 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
   const [progress, setProgress] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [connectionMessage, setConnectionMessage] = useState('');
+  const [modelsStatus, setModelsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [modelsMessage, setModelsMessage] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +57,12 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
 
   const selectedConfig = providerConfigs?.find((item) => item.id === provider);
   const selectedProvider = providers.find((item) => item.id === provider) ?? providers[0];
+  let modelOptions = (selectedConfig?.models?.length ?? 0) > 0
+    ? selectedConfig?.models ?? selectedProvider.models
+    : selectedProvider.models;
+  if (model && !modelOptions.includes(model)) {
+    modelOptions = [model, ...modelOptions];
+  }
   const providerLabels: Record<ProviderId, string> = {
     mock: language === 'zh' ? 'Mock（本地示例）' : 'Mock (local sample)',
     openai: 'OpenAI',
@@ -68,6 +77,8 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
     setApiKey('');
     setConnectionStatus('idle');
     setConnectionMessage('');
+    setModelsStatus('idle');
+    setModelsMessage('');
     const nextConfig = providerConfigs?.find((item) => item.id === nextProvider);
     setModel(nextConfig?.defaultModel ?? providers.find((item) => item.id === nextProvider)?.defaultModel ?? '');
     setEndpoint(nextProvider === 'custom' ? nextConfig?.endpoint ?? '' : '');
@@ -78,23 +89,42 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
     setConnectionMessage(t('testingConnection'));
 
     try {
-      if (provider !== 'mock' && apiKey.trim().length > 0) {
+      if (provider !== 'mock' && !model.trim()) {
+        throw new Error(t('modelRequired'));
+      }
+      if (provider !== 'mock') {
         await configureProvider({
           provider,
-          apiKey: apiKey.trim(),
-          endpoint: provider === 'custom' ? endpoint.trim() : undefined,
+          apiKey: apiKey.trim() || undefined,
+          model: model.trim() || undefined,
+          endpoint: provider === 'custom' ? endpoint.trim() || undefined : undefined,
           persist: true,
         });
       }
 
-      const result = await testProvider({
+      const runTest = () => testProvider({
         provider,
         model,
         apiKey: apiKey.trim() || undefined,
         endpoint: provider === 'custom' ? endpoint.trim() || undefined : undefined,
       });
+
+      let result;
+      try {
+        result = await runTest();
+      } catch (error) {
+        const isNetworkError = error instanceof TypeError
+          || (error instanceof Error && /fetch|network/i.test(error.message));
+        if (!isNetworkError) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        result = await runTest();
+      }
       const configs = await getProviderConfigs();
       setProviderConfigs(configs);
+      const updatedConfig = configs.find((item) => item.id === provider);
+      if (updatedConfig?.defaultModel) {
+        setModel(updatedConfig.defaultModel);
+      }
       setConnectionStatus('success');
       setConnectionMessage(
         `${t('connectionOk')} · ${t('latency')} ${result.latencyMs}ms · ${result.responsePreview}`,
@@ -108,6 +138,31 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
       }
       setConnectionStatus('error');
       setConnectionMessage(error instanceof Error ? error.message : 'Provider test failed');
+    }
+  };
+
+  const handleFetchModels = async () => {
+    setModelsStatus('loading');
+    setModelsMessage(t('fetchingModels'));
+
+    try {
+      const result = await fetchProviderModels({
+        provider,
+        apiKey: apiKey.trim() || undefined,
+        endpoint: provider === 'custom' ? endpoint.trim() || undefined : undefined,
+      });
+      const nextModels = result.models.length > 0 ? result.models : (selectedConfig?.models ?? selectedProvider.models);
+      setProviderConfigs((current) => current?.map((item) => (
+        item.id === provider ? { ...item, models: nextModels } : item
+      )) ?? current);
+      if (result.models.length > 0 && !model && result.models[0]) {
+        setModel(result.models[0]);
+      }
+      setModelsStatus('success');
+      setModelsMessage(`${t('modelsLoaded')} ${result.models.length}`);
+    } catch (error) {
+      setModelsStatus('error');
+      setModelsMessage(error instanceof Error ? error.message : t('modelLoadError'));
     }
   };
 
@@ -190,16 +245,38 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
         <div className="list-panel">
           <h2 className="panel-heading">{t('modelSelection')}</h2>
           <label className="detail-label" htmlFor="model">{t('model')}</label>
-          <input
-            id="model"
-            type="text"
-            list="provider-models"
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-            className="text-input"
-          />
+          <div className="model-row">
+            <input
+              id="model"
+              type="text"
+              list="provider-models"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              className="text-input"
+            />
+            <button
+              type="button"
+              className="filter-button"
+              onClick={handleFetchModels}
+              disabled={modelsStatus === 'loading' || provider === 'mock'}
+              title={t('fetchModels')}
+            >
+              {modelsStatus === 'loading' ? <Loader2 size={14} /> : <RefreshCw size={14} />}
+              {t('fetchModels')}
+            </button>
+          </div>
+          {modelsMessage && (
+            <p
+              className="path-summary"
+              style={{
+                color: modelsStatus === 'error' ? 'var(--red)' : 'var(--teal)',
+              }}
+            >
+              {modelsMessage}
+            </p>
+          )}
           <datalist id="provider-models">
-            {(selectedConfig?.models ?? selectedProvider.models).map((modelOption) => (
+            {modelOptions.map((modelOption) => (
               <option key={modelOption} value={modelOption} />
             ))}
           </datalist>
@@ -209,13 +286,13 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
           <div className="list-panel">
             <h2 className="panel-heading">{t('apiKey')}</h2>
             <label className="detail-label" htmlFor="api-key">
-              {selectedConfig?.configured ? t('configured') : t('notConfigured')}
+              {selectedConfig?.configured ? t('savedKey') : t('notConfigured')}
             </label>
             <input
               id="api-key"
               type="password"
               value={apiKey}
-              placeholder={selectedConfig?.envKey ?? ''}
+              placeholder={selectedConfig?.configured ? t('savedKeyPlaceholder') : selectedConfig?.envKey ?? ''}
               onChange={(event) => setApiKey(event.target.value)}
               className="text-input"
             />
