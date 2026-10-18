@@ -1,5 +1,6 @@
-import { FileCode2, ShieldCheck } from 'lucide-react';
+import { ExternalLink, FileCode2, ShieldCheck } from 'lucide-react';
 import type { Project } from '../types';
+import { evidenceSourceUrl } from '../data/sourceRefs';
 import { useI18n } from '../i18n';
 
 interface EvidencePanelProps {
@@ -46,6 +47,18 @@ export function EvidencePanel({ project, title, subtitle, evidenceIds }: Evidenc
               <p className="evidence-file">
                 <FileCode2 size={12} />
                 {evidence.file}:{evidence.startLine}-{evidence.endLine}
+                {evidenceSourceUrl(project, evidence) && (
+                  <a
+                    className="evidence-source-link"
+                    href={evidenceSourceUrl(project, evidence)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={t('openSource')}
+                    aria-label={t('openSource')}
+                  >
+                    <ExternalLink size={12} />
+                  </a>
+                )}
               </p>
               <pre className="code-block">{evidence.code}</pre>
             </article>

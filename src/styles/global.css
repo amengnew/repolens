@@ -948,6 +948,25 @@ button {
   font-weight: 650;
 }
 
+.evidence-source-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.evidence-source-link:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .evidence-label {
   display: block;
   margin-bottom: 5px;

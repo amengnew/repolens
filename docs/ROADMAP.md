@@ -260,6 +260,7 @@ Out of scope for MVP:
 - **Custom OpenAI-compatible provider added:** Users can configure a full chat-completions endpoint and API key. The endpoint and key are persisted server-side, and requests use the DeepSeek-style Bearer authorization header.
 - **Real Ask Repo AI chain added:** `/api/ask` sends the project summary, entries, flows, decisions, and source evidence back to the configured model, validates citations against analysis evidence, and supports both preset and custom questions with a one-click follow-up flow.
 - **Error-path visualization added:** Flows now render each error path as a red branch node connected from the final core node, so failure behavior is visible inside the interactive graph instead of only in a side list.
+- **Commit-pinned source links added:** Every evidence card now links directly to the corresponding GitHub blob and `#L` line range at the analyzed commit, with an open-source affordance for each reference.
 - **Repository-centric navigation added:** New Analysis is the default entry and binds provider, model, and repository URL before analysis. The workspace then exposes the repository content under Current Repository, while Global Repository History groups analyses by repository and loads the latest result.
 - The analysis API is zero-dependency Node HTTP in development, with Vite proxying `/api` requests to `http://127.0.0.1:3001`.
 
