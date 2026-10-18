@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Boxes,
   Database,
@@ -24,6 +24,7 @@ import { RepositoryHistoryPanel } from './components/RepositoryHistoryPanel';
 import { localizeProject } from './data/localizeProject';
 import { useI18n } from './i18n';
 import { getAnalysisJob } from './ai/client';
+import { providers, type ProviderId } from './ai/providers';
 import type { Project } from './types';
 
 type ViewId =
@@ -74,6 +75,15 @@ const globalViews: ViewConfig[] = [
 export default function App() {
   const { language, setLanguage, t } = useI18n();
   const [sourceProject, setProject] = useState(sampleProject);
+  const [activeProvider, setActiveProvider] = useState<ProviderId>(() => {
+    const saved = typeof localStorage === 'undefined' ? null : localStorage.getItem('repolens:provider');
+    return saved && providers.some((item) => item.id === saved)
+      ? saved as ProviderId
+      : 'mock';
+  });
+  const [activeModel, setActiveModel] = useState<string>(() => (
+    typeof localStorage === 'undefined' ? '' : localStorage.getItem('repolens:model') ?? ''
+  ));
   const [activeView, setActiveView] = useState<ViewId>('provider');
   const [selectedEntryId, setSelectedEntryId] = useState<string>('entry-send-message');
   const [selectedFlowId, setSelectedFlowId] = useState<string>('flow-chat');
@@ -217,6 +227,11 @@ export default function App() {
     handleAnalysisComplete(job.result);
   };
 
+  useEffect(() => {
+    localStorage.setItem('repolens:provider', activeProvider);
+    localStorage.setItem('repolens:model', activeModel);
+  }, [activeProvider, activeModel]);
+
   return (
     <div className="app-shell">
       <header className="top-bar">
@@ -330,6 +345,8 @@ export default function App() {
             {activeView === 'ask' && (
               <AskPanel
                 project={project}
+                provider={activeProvider}
+                model={activeModel}
                 selectedQuestion={selectedSample.question}
                 onSelectQuestion={handleSelectQuestion}
               />
@@ -344,7 +361,13 @@ export default function App() {
               />
             )}
             {activeView === 'provider' && (
-              <ProviderPanel onAnalysisComplete={handleAnalysisComplete} />
+              <ProviderPanel
+                provider={activeProvider}
+                model={activeModel}
+                onProviderChange={setActiveProvider}
+                onModelChange={setActiveModel}
+                onAnalysisComplete={handleAnalysisComplete}
+              />
             )}
             {activeView === 'repositories' && (
               <RepositoryHistoryPanel onLoadProject={handleLoadHistoryProject} />

@@ -13,14 +13,22 @@ import type { Project } from '../types';
 import { useI18n } from '../i18n';
 
 interface ProviderPanelProps {
+  provider: ProviderId;
+  model: string;
+  onProviderChange: (provider: ProviderId) => void;
+  onModelChange: (model: string) => void;
   onAnalysisComplete: (project: Project) => void;
 }
 
-export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
+export function ProviderPanel({
+  provider,
+  model,
+  onProviderChange,
+  onModelChange,
+  onAnalysisComplete,
+}: ProviderPanelProps) {
   const { t, language } = useI18n();
   const [repoUrl, setRepoUrl] = useState('https://github.com/vercel/ai');
-  const [provider, setProvider] = useState<ProviderId>('mock');
-  const [model, setModel] = useState(providers[0].defaultModel);
   const [providerConfigs, setProviderConfigs] = useState<ProviderRuntimeConfig[] | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [endpoint, setEndpoint] = useState('');
@@ -40,7 +48,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
         if (cancelled) return;
         setProviderConfigs(configs);
         const initial = configs.find((item) => item.id === provider) ?? configs[0];
-        if (initial) setModel(initial.defaultModel);
+        if (initial) onModelChange(initial.defaultModel);
         if (initial?.id === 'custom') setEndpoint(initial.endpoint);
       })
       .catch((error) => {
@@ -53,7 +61,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [provider]);
+  }, [provider, onModelChange]);
 
   const selectedConfig = providerConfigs?.find((item) => item.id === provider);
   const selectedProvider = providers.find((item) => item.id === provider) ?? providers[0];
@@ -73,14 +81,14 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
   };
 
   const handleProviderChange = (nextProvider: ProviderId) => {
-    setProvider(nextProvider);
+    onProviderChange(nextProvider);
     setApiKey('');
     setConnectionStatus('idle');
     setConnectionMessage('');
     setModelsStatus('idle');
     setModelsMessage('');
     const nextConfig = providerConfigs?.find((item) => item.id === nextProvider);
-    setModel(nextConfig?.defaultModel ?? providers.find((item) => item.id === nextProvider)?.defaultModel ?? '');
+    onModelChange(nextConfig?.defaultModel ?? providers.find((item) => item.id === nextProvider)?.defaultModel ?? '');
     setEndpoint(nextProvider === 'custom' ? nextConfig?.endpoint ?? '' : '');
   };
 
@@ -123,7 +131,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
       setProviderConfigs(configs);
       const updatedConfig = configs.find((item) => item.id === provider);
       if (updatedConfig?.defaultModel) {
-        setModel(updatedConfig.defaultModel);
+        onModelChange(updatedConfig.defaultModel);
       }
       setConnectionStatus('success');
       setConnectionMessage(
@@ -156,7 +164,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
         item.id === provider ? { ...item, models: nextModels } : item
       )) ?? current);
       if (result.models.length > 0 && !model && result.models[0]) {
-        setModel(result.models[0]);
+        onModelChange(result.models[0]);
       }
       setModelsStatus('success');
       setModelsMessage(`${t('modelsLoaded')} ${result.models.length}`);
@@ -251,7 +259,7 @@ export function ProviderPanel({ onAnalysisComplete }: ProviderPanelProps) {
               type="text"
               list="provider-models"
               value={model}
-              onChange={(event) => setModel(event.target.value)}
+              onChange={(event) => onModelChange(event.target.value)}
               className="text-input"
             />
             <button

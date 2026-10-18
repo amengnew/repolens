@@ -442,7 +442,7 @@ function extractJsonObject(text: string): string | null {
   return null;
 }
 
-function findLargestValidJsonObject(text: string): unknown | null {
+export function findLargestValidJsonObject(text: string): unknown | null {
   let best: unknown = null;
   let bestLength = 0;
 

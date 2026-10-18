@@ -8,7 +8,7 @@
     "dev:server": "node --watch --experimental-strip-types server/index.ts",
     "dev:all": "npm run dev:server & npm run dev",
     "build": "tsc -b && vite build",
-    "test": "node --test --experimental-strip-types src/ai/analyze.test.ts src/ai/staticAnalysis.test.ts src/ai/providers.test.ts",
+    "test": "node --test --experimental-strip-types src/ai/analyze.test.ts src/ai/ask.test.ts src/ai/staticAnalysis.test.ts src/ai/providers.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

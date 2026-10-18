@@ -96,6 +96,49 @@ export async function getRepositoryHistory(): Promise<RepositoryHistoryItem[]> {
   return response.json();
 }
 
+export interface AskRequest {
+  repoUrl: string;
+  provider: ProviderId;
+  model: string;
+  language: Language;
+  question: string;
+}
+
+export interface AskResponse {
+  answer: string;
+  evidenceIds: string[];
+}
+
+export async function askRepository(request: AskRequest): Promise<AskResponse> {
+  const response = await fetch('/api/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+
+  const text = await response.text();
+  let result: { answer?: string; evidenceIds?: unknown } = {};
+  try {
+    result = text ? JSON.parse(text) : {};
+  } catch {
+    result = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(result.answer || text || `Ask failed: ${response.status}`);
+  }
+  if (typeof result.answer !== 'string' || result.answer.trim().length === 0) {
+    throw new Error('Ask response is invalid');
+  }
+
+  return {
+    answer: result.answer,
+    evidenceIds: Array.isArray(result.evidenceIds)
+      ? result.evidenceIds.filter((id): id is string => typeof id === 'string')
+      : [],
+  };
+}
+
 export interface ProviderRuntimeConfig {
   id: ProviderId;
   label: string;

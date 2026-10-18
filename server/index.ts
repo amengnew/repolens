@@ -4,6 +4,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { analyzeRepository } from '../src/ai/analyze.ts';
 import {
+  buildAskPrompt,
+  buildMockAskResult,
+  parseAskResponse,
+  type AskResult,
+} from '../src/ai/ask.ts';
+import {
   callAI,
   fetchModels,
   providers,
@@ -97,6 +103,53 @@ function parseRequest(body: string): AnalysisRequest {
   }
 
   return { repoUrl, provider, model, language };
+}
+
+function normalizedRepositoryUrl(repoUrl: string) {
+  return repoUrl.replace(/^https?:\/\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+}
+
+function findLatestProject(repoUrl: string): unknown | null {
+  const normalized = normalizedRepositoryUrl(repoUrl);
+  const completed = Array.from(jobs.values())
+    .filter((job) => job.status === 'complete')
+    .sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
+
+  for (const job of completed) {
+    const result = job.result as { repository?: string } | undefined;
+    if (normalizedRepositoryUrl(result?.repository ?? '') === normalized
+      || normalizedRepositoryUrl(job.request.repoUrl) === normalized) {
+      return job.result ?? null;
+    }
+  }
+  return null;
+}
+
+function parseAskRequest(body: string): AnalysisRequest & { question: string } {
+  const request = parseRequest(body);
+  const parsed = JSON.parse(body) as { question?: unknown };
+  if (typeof parsed.question !== 'string' || parsed.question.trim().length === 0) {
+    throw new Error('question must be a non-empty string');
+  }
+  return { ...request, question: parsed.question.trim() };
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`AI request timed out after ${Math.round(ms / 1000)}s`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 const providerEnvKeys: Record<ProviderId, string | null> = {
@@ -495,6 +548,61 @@ const server = createServer(async (req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(Array.from(repositoryMap.values())));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/ask') {
+    try {
+      const input = parseAskRequest(await readBody(req));
+      const project = findLatestProject(input.repoUrl) as import('../src/types.ts').Project | null;
+      if (!project) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          answer: 'No analysis found for this repository. Analyze it first in New Analysis.',
+        }));
+        return;
+      }
+
+      log('ask:started', {
+        repository: input.repoUrl,
+        provider: input.provider,
+        model: input.model,
+        question: input.question.slice(0, 160),
+      });
+
+      const startedAt = Date.now();
+      let result: AskResult;
+      if (input.provider === 'mock') {
+        result = buildMockAskResult(project, input.question);
+      } else {
+        const prompt = buildAskPrompt(project, input.question, input.language);
+        const raw = await withTimeout(callAI({
+          provider: input.provider,
+          apiKey: providerApiKey(input.provider),
+          model: input.model,
+          prompt,
+          endpoint: input.provider === 'custom' ? customEndpoint() : undefined,
+          jsonMode: true,
+        }), 120_000);
+        const parsed = parseAskResponse(raw, project);
+        if (!parsed) throw new Error('AI answer was not valid JSON');
+        result = parsed;
+      }
+
+      log('ask:complete', {
+        repository: input.repoUrl,
+        provider: input.provider,
+        citations: result.evidenceIds.length,
+        durationMs: Date.now() - startedAt,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Ask failed';
+      log('ask:error', { error: message });
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ answer: message }));
+    }
     return;
   }
 

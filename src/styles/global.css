@@ -763,6 +763,30 @@ button {
   background: var(--surface);
 }
 
+.ask-input-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.ask-input-row .text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ask-error {
+  color: var(--red);
+}
+
+.ask-question {
+  color: var(--teal);
+  font-weight: 600;
+}
+
+.answer-placeholder {
+  margin: 0;
+}
+
 .answer-text {
   margin: 0 0 14px;
   font-size: 15px;
