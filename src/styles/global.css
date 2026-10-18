@@ -579,6 +579,22 @@ button {
   box-shadow: 0 0 0 3px var(--accent-soft), 0 8px 20px rgba(79, 70, 229, 0.18);
 }
 
+.flow-node.error {
+  width: 260px;
+  border-color: #fda4af;
+  background: var(--red-soft);
+  box-shadow: 0 6px 18px rgba(190, 18, 60, 0.12);
+}
+
+.flow-node.error .flow-node-type,
+.flow-node.error .flow-node-count {
+  color: #be123c;
+}
+
+.flow-node.error .flow-node-label {
+  white-space: normal;
+}
+
 .flow-node-type {
   display: block;
   margin-bottom: 6px;

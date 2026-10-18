@@ -11,6 +11,7 @@ import {
 import { GitBranch, ShieldAlert, Workflow } from 'lucide-react';
 import type { Project } from '../types';
 import { FlowNodeCard, type FlowCardData } from './FlowNodeCard';
+import { buildFlowErrorBranches } from './flowErrorBranches';
 import { useI18n } from '../i18n';
 
 interface FlowExplorerPanelProps {
@@ -70,6 +71,35 @@ export function FlowExplorerPanel({
     }));
   }, [selectedFlow.edges]);
 
+  const errorBranches = useMemo(() => buildFlowErrorBranches(selectedFlow), [selectedFlow]);
+  const errorBranchNodes = useMemo<Node<FlowCardData, 'repolens'>[]>(() => {
+    return errorBranches.nodes.map((branch) => ({
+      id: branch.id,
+      type: 'repolens',
+      position: branch.position,
+      selectable: false,
+      draggable: false,
+      data: {
+        label: branch.label,
+        nodeType: 'error',
+        evidenceCount: 0,
+        variant: 'error',
+        countLabel: t('errorPaths'),
+      },
+    }));
+  }, [errorBranches, t]);
+  const errorBranchEdges = useMemo<Edge[]>(() => {
+    return errorBranches.edges.map((edge, index) => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      label: 'error',
+      animated: true,
+      style: { stroke: edgeColors.error ?? '#be123c' },
+      markerEnd: { type: MarkerType.ArrowClosed },
+    }));
+  }, [errorBranches]);
+
   return (
     <div>
       <div className="section-header">
@@ -102,8 +132,8 @@ export function FlowExplorerPanel({
       <section className="panel-section">
         <div className="flow-canvas">
           <ReactFlow
-            nodes={flowNodes}
-            edges={flowEdges}
+            nodes={[...flowNodes, ...errorBranchNodes]}
+            edges={[...flowEdges, ...errorBranchEdges]}
             nodeTypes={nodeTypes}
             onNodeClick={(_, node) => onSelectNode(node.id)}
             fitView
