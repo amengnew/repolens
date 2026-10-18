@@ -86,6 +86,7 @@ export interface Project {
   repository: string;
   commit: string;
   summary: string;
+  analysisMode?: 'ai' | 'static';
   techStack: string[];
   complexity: { label: string; value: string; detail: string }[];
   coreModules: string[];

@@ -91,6 +91,7 @@ const translations = {
     latestAnalysis: 'Latest analysis',
     analysisCount: 'Analyses',
     openRepository: 'Open repository',
+    staticFallback: 'Static analysis fallback',
   },
   zh: {
     overview: '项目总览',
@@ -180,6 +181,7 @@ const translations = {
     latestAnalysis: '最近分析',
     analysisCount: '分析次数',
     openRepository: '打开仓库',
+    staticFallback: '静态分析兜底',
   },
 } as const;
 

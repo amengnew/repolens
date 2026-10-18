@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseAIResponse, toProject } from './analyze.ts';
+import { isSubstantiveAnalysis, parseAIResponse, toProject } from './analyze.ts';
 
 const context = {
   owner: 'example',
@@ -136,24 +136,106 @@ test('accepts a valid structured AI response', () => {
   assert.equal(analysis.decisions?.length, 1);
 });
 
-test('rejects an invalid AI response entry kind', () => {
-  assert.throws(
-    () => parseAIResponse(JSON.stringify({
-      name: 'agent-app',
-      summary: 'Example',
-      entries: [{ name: 'Bad entry', role: 'End user', kind: 'grpc' }],
-    })),
-    /entry kind is invalid/,
-  );
+test('accepts JSON wrapped in markdown fences', () => {
+  const analysis = parseAIResponse(`\`\`\`json
+${JSON.stringify({ name: 'agent-app', summary: 'Fenced example' })}
+\`\`\`
+`);
+
+  assert.equal(analysis.name, 'agent-app');
+  assert.equal(analysis.summary, 'Fenced example');
 });
 
-test('rejects an AI response flow with malformed steps', () => {
-  assert.throws(
-    () => parseAIResponse(JSON.stringify({
+test('extracts the JSON object when the model appends commentary', () => {
+  const analysis = parseAIResponse(`${JSON.stringify({ name: 'agent-app', summary: 'Trailing prose example' })}
+
+The repository also contains a docs directory with additional examples.
+`);
+
+  assert.equal(analysis.name, 'agent-app');
+  assert.equal(analysis.summary, 'Trailing prose example');
+});
+
+test('finds the real JSON object when prose contains a broken template', () => {
+  const analysis = parseAIResponse(`The requested shape is {"id":string,"name":string,"kind":"http"}.
+
+Here is the actual analysis:
+${JSON.stringify({ name: 'agent-app', summary: 'Embedded prose example' })}
+That is the complete result.`);
+
+  assert.equal(analysis.name, 'agent-app');
+  assert.equal(analysis.summary, 'Embedded prose example');
+});
+
+test('normalizes an AI response entry with an unknown kind', () => {
+  const analysis = parseAIResponse(JSON.stringify({
+    name: 'agent-app',
+    summary: 'Example',
+    entries: [{ name: 'Bad entry', role: 'End user', kind: 'grpc' }],
+  }));
+
+  assert.equal(analysis.entries?.[0].kind, 'tool');
+  assert.equal(analysis.entries?.[0].role, 'End user');
+});
+
+test('normalizes an AI response flow with malformed steps', () => {
+  const analysis = parseAIResponse(JSON.stringify({
+    name: 'agent-app',
+    summary: 'Example',
+    flows: [{ name: 'Bad flow', steps: 'Receive request' }],
+  }));
+
+  assert.deepEqual(analysis.flows?.[0].steps, []);
+});
+
+test('unwraps a wrapper object around the real analysis', () => {
+  const analysis = parseAIResponse(JSON.stringify({
+    status: 'ok',
+    data: {
       name: 'agent-app',
       summary: 'Example',
-      flows: [{ name: 'Bad flow', steps: 'Receive request' }],
-    })),
-    /requires a string array named steps/,
+      entries: [{ name: 'CLI entry', role: 'Developer', kind: 'cli' }],
+    },
+  }));
+
+  assert.equal(analysis.name, 'agent-app');
+  assert.equal(analysis.entries?.length, 1);
+});
+
+test('drops entries that have no usable name', () => {
+  const analysis = parseAIResponse(JSON.stringify({
+    name: 'agent-app',
+    summary: 'Example',
+    entries: [{ role: 'End user', kind: 'http' }, { name: 'Kept entry', role: 'Developer', kind: 'cli' }],
+  }));
+
+  assert.equal(analysis.entries?.length, 1);
+  assert.equal(analysis.entries?.[0].name, 'Kept entry');
+});
+
+test('hydrates empty structured sections from static analysis', () => {
+  const project = toProject(
+    { name: 'agent-app', summary: 'Example' },
+    {
+      ...context,
+      staticAnalysis: {
+        ...context.staticAnalysis,
+        routes: [{ method: 'GET', path: '/health', file: 'src/index.ts', line: 3, framework: 'Express' }],
+      },
+    },
+    'en',
+  );
+
+  assert.equal(project.entries[0].kind, 'http');
+  assert.equal(project.entries[0].name, 'GET /health');
+  assert.equal(project.flows[0].name, 'GET /health');
+  assert.equal(project.flows[0].nodes.length, 4);
+});
+
+test('treats metadata-only AI output as not substantive', () => {
+  assert.equal(isSubstantiveAnalysis({ name: 'agent-app', summary: 'Example' }), false);
+  assert.equal(
+    isSubstantiveAnalysis({ name: 'agent-app', summary: 'Example', flows: [{ name: 'Flow', steps: ['Step'] }] }),
+    true,
   );
 });

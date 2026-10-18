@@ -59,6 +59,7 @@ export interface CallAIOptions {
   model: string;
   prompt: string;
   endpoint?: string;
+  jsonMode?: boolean;
 }
 
 export interface FetchModelsOptions {
@@ -91,6 +92,27 @@ function geminiModelIds(data: unknown): string[] {
     }
     return typeof model.name === 'string' ? [model.name.replace(/^models\//, '')] : [];
   }))].sort();
+}
+
+function extractChatContent(data: unknown): string {
+  const choices = (data as { choices?: Array<{ message?: Record<string, unknown>; text?: unknown }> })?.choices;
+  const message = choices?.[0]?.message;
+  const candidates = [message?.content, message?.reasoning_content];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) return candidate;
+    if (Array.isArray(candidate)) {
+      const joined = candidate.map((part) => {
+        if (typeof part === 'string') return part;
+        const text = (part as { text?: unknown })?.text;
+        return typeof text === 'string' ? text : '';
+      }).join('');
+      if (joined.trim().length > 0) return joined;
+    }
+  }
+
+  const choiceText = choices?.[0]?.text;
+  return typeof choiceText === 'string' ? choiceText : '';
 }
 
 export function chatCompletionsToModelsUrl(endpoint: string): string {
@@ -163,7 +185,14 @@ export async function fetchModels({ provider, apiKey, endpoint }: FetchModelsOpt
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
-export async function callAI({ provider, apiKey, model, prompt, endpoint }: CallAIOptions): Promise<string> {
+export async function callAI({
+  provider,
+  apiKey,
+  model,
+  prompt,
+  endpoint,
+  jsonMode = false,
+}: CallAIOptions): Promise<string> {
   if (provider === 'mock') {
     return JSON.stringify({ note: 'Mock provider returns the local sample project.' });
   }
@@ -179,24 +208,57 @@ export async function callAI({ provider, apiKey, model, prompt, endpoint }: Call
         ? 'https://api.deepseek.com/chat/completions'
         : endpoint ?? '';
 
+    const body = {
+      model,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a strict JSON data extraction engine. Your entire response must be exactly one valid JSON object. Never include prose, Markdown fences, type templates, or explanations.',
+        },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.2,
+      max_tokens: 8192,
+      ...(jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
+    };
     const response = await fetch(requestUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-      }),
+      body: JSON.stringify(body),
     });
     if (!response.ok) {
       const errorBody = await response.text();
+      if (jsonMode && /response_format|json_object|json mode|unsupported param/i.test(errorBody)) {
+        const fallbackResponse = await fetch(requestUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({ ...body, response_format: undefined }),
+        });
+        if (!fallbackResponse.ok) {
+          const fallbackError = await fallbackResponse.text();
+          throw new Error(`AI request failed: ${fallbackResponse.status} ${fallbackError.slice(0, 300)}`);
+        }
+        const fallbackData = await fallbackResponse.json();
+        const fallbackContent = extractChatContent(fallbackData);
+        if (fallbackContent.trim().length === 0) {
+          throw new Error('AI request returned an empty response');
+        }
+        return fallbackContent;
+      }
       throw new Error(`AI request failed: ${response.status} ${errorBody.slice(0, 300)}`);
     }
     const data = await response.json();
-    return data.choices?.[0]?.message?.content ?? '';
+    const content = extractChatContent(data);
+    if (content.trim().length === 0) {
+      throw new Error('AI request returned an empty response');
+    }
+    return content;
   }
 
   if (provider === 'anthropic') {
@@ -209,7 +271,7 @@ export async function callAI({ provider, apiKey, model, prompt, endpoint }: Call
       },
       body: JSON.stringify({
         model,
-        max_tokens: 4096,
+        max_tokens: 8192,
         messages: [{ role: 'user', content: prompt }],
       }),
     });

@@ -9,6 +9,7 @@ export interface AnalyzeOptions {
   provider: ProviderId;
   apiKey: string;
   model: string;
+  endpoint?: string;
   language: Language;
   onProgress?: (progress: AnalysisProgress) => void;
 }
@@ -83,6 +84,52 @@ function parseGitHubUrl(url: string) {
   return { owner: match[1], repo: match[2].replace(/\.git$/, '') };
 }
 
+function githubHeaders(accept = 'application/vnd.github+json') {
+  return {
+    Accept: accept,
+    Connection: 'close',
+    'User-Agent': 'repolens-analysis',
+  };
+}
+
+async function githubFetchJson(url: string): Promise<unknown> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers: githubHeaders() });
+      if (!response.ok) {
+        throw new Error(`GitHub request failed: ${response.status}`);
+      }
+      const text = await response.text();
+      if (!text.trim()) {
+        throw new Error('GitHub returned an empty response');
+      }
+      return JSON.parse(text);
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 600 * attempt));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('GitHub request failed');
+}
+
+async function githubFetchText(url: string): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { Connection: 'close', 'User-Agent': 'repolens-analysis' },
+      });
+      if (!response.ok) throw new Error(`raw file request failed: ${response.status}`);
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('raw file request failed');
+}
+
 async function fetchRepositoryContext(
   repoUrl: string,
   language: Language,
@@ -93,35 +140,34 @@ async function fetchRepositoryContext(
     progress: 10,
     stage: language === 'zh' ? '读取仓库元数据' : 'Fetching repository metadata',
   });
-  const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`);
-  if (!repoResponse.ok) throw new Error(`GitHub repository request failed: ${repoResponse.status}`);
-  const repoData = await repoResponse.json();
+  const repoData = await githubFetchJson(`https://api.github.com/repos/${owner}/${repo}`) as {
+    name?: string;
+    description?: string;
+    default_branch?: string;
+  };
   onProgress?.({
     progress: 25,
     stage: language === 'zh' ? '固定 commit' : 'Pinning commit',
   });
-  const commitResponse = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/commits/${repoData.default_branch}`,
-  );
-  if (!commitResponse.ok) {
-    throw new Error(`GitHub commit request failed: ${commitResponse.status}`);
-  }
-  const commitData = await commitResponse.json();
+  const commitData = await githubFetchJson(
+    `https://api.github.com/repos/${owner}/${repo}/commits/${repoData.default_branch ?? 'main'}`,
+  ) as { sha?: string };
   const commit = commitData.sha;
+  if (!commit) {
+    throw new Error('GitHub commit response is missing sha');
+  }
 
   onProgress?.({
     progress: 40,
     stage: language === 'zh' ? '读取文件树' : 'Reading repository tree',
   });
-  const treeResponse = await fetch(
+  const treeData = await githubFetchJson(
     `https://api.github.com/repos/${owner}/${repo}/git/trees/${commit}?recursive=1`,
-  );
-  if (!treeResponse.ok) throw new Error(`GitHub tree request failed: ${treeResponse.status}`);
-  const treeData = await treeResponse.json();
+  ) as { tree?: Array<{ type?: string; path?: string }> };
 
   const paths = (treeData.tree ?? [])
-    .filter((item: { type?: string }) => item.type === 'blob')
-    .map((item: { path?: string }) => item.path ?? '')
+    .filter((item) => item.type === 'blob')
+    .map((item) => item.path ?? '')
     .filter(Boolean);
 
   const relevantExtensions = ['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.java', '.md', '.json', '.yaml', '.yml'];
@@ -141,17 +187,19 @@ async function fetchRepositoryContext(
       return { path, score };
     })
     .sort((a, b) => b.score - a.score);
-  const selectedPaths = priorityPaths.slice(0, 16).map((item: { path: string }) => item.path);
+  const selectedPaths = priorityPaths.slice(0, 12).map((item: { path: string }) => item.path);
 
   onProgress?.({
     progress: 55,
     stage: language === 'zh' ? '下载关键源码文件' : 'Downloading key source files',
   });
   const filePromises = selectedPaths.map(async (path: string) => {
-    const response = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${commit}/${path}`);
-    if (!response.ok) return { path, content: '' };
-    const text = await response.text();
-    return { path, content: text.slice(0, 8000) };
+    try {
+      const text = await githubFetchText(`https://raw.githubusercontent.com/${owner}/${repo}/${commit}/${path}`);
+      return { path, content: text.slice(0, 6000) };
+    } catch {
+      return { path, content: '' };
+    }
   });
   const files = await Promise.all(filePromises);
 
@@ -197,7 +245,64 @@ Use the static analysis result as high-confidence evidence for routes, commands,
 The role field must be one of: "End user", "Admin", "Developer", "System", "External service".
 Use sourcePath and sourceQuote only when the selected files contain the supporting code. sourceQuote must be copied verbatim from that file.
 Return all user-facing text in ${language === 'zh' ? 'Simplified Chinese' : 'English'}.
-Do not include Markdown fences.`;
+Do not include Markdown fences.
+Your final answer must start with { and end with }. Missing fields use empty arrays or empty strings. Do not explain what you are doing.`;
+}
+
+function buildCompactContext(context: RepositoryContext) {
+  const priorityFiles = [...context.selectedFiles].sort((a, b) => {
+    const pathScore = (path: string) =>
+      (/readme/i.test(path) ? 100 : 0) + (/^src\//.test(path) ? 30 : 0);
+    return pathScore(b.path) - pathScore(a.path);
+  }).slice(0, 6);
+
+  return `Repository: ${context.name}
+Description: ${context.description}
+Commit: ${context.commit}
+
+Selected source files:
+${priorityFiles.map((file) => `\n--- ${file.path} ---\n${file.content.slice(0, 5000)}`).join('\n')}
+
+Static analysis result:
+${JSON.stringify(context.staticAnalysis, null, 2)}`;
+}
+
+function buildRepairPrompt(
+  previousText: string,
+  context: RepositoryContext,
+  language: Language,
+  errorMessage?: string,
+) {
+  const previousSection = previousText.trim().length > 0
+    ? `Here is the exact previous response:
+---BEGIN PREVIOUS RESPONSE---
+${previousText.slice(0, 120_000)}
+---END PREVIOUS RESPONSE---`
+    : '';
+
+  return `A repository analysis of ${context.name} was supposed to return one JSON object, but the response could not be used.
+
+${previousSection}
+
+Repository context for grounding:
+${buildCompactContext(context)}
+
+Validation error: ${errorMessage ?? 'the response was not valid JSON'}
+
+Repair it into exactly one valid JSON object with this shape:
+{
+  "name": string,
+  "summary": string,
+  "techStack": string[],
+  "coreModules": string[],
+  "importantFiles": string[],
+  "entries": [{"id":string,"name":string,"role":"End user"|"Admin"|"Developer"|"System"|"External service","kind":"ui"|"http"|"cli"|"event"|"job"|"tool"|"websocket","input":string,"auth":string,"permissions":string[],"flowId":string,"sourcePath":string,"sourceQuote":string}],
+  "flows": [{"id":string,"name":string,"trigger":string,"description":string,"steps":string[],"errorPaths":string[],"sourcePath":string,"sourceQuote":string}],
+  "decisions": [{"id":string,"title":string,"topic":string,"problem":string,"solution":string,"parameters":[{"key":string,"value":string}],"rationale":string,"alternatives":string[],"tradeoffs":string[],"sourcePath":string,"sourceQuote":string}]
+}
+
+The shape above is a schema only; it contains no data about ${context.name}. Every string value must be real repository data, never schema text such as "string" or placeholder names.
+${previousSection ? 'Keep every valid part of the previous response that describes the repository. ' : ''}Do not echo your instructions, the schema, or any example. Write one complete JSON object about ${context.name} with real entry, flow, and decision data. Return all user-facing text in ${language === 'zh' ? 'Simplified Chinese' : 'English'}. Your final answer must contain only valid JSON.`;
 }
 
 const validEntryKinds = ['http', 'ui', 'cli', 'event', 'job', 'tool', 'websocket'];
@@ -207,102 +312,396 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function requireStringArray(record: Record<string, unknown>, key: string) {
-  if (record[key] === undefined) return;
-  if (!Array.isArray(record[key])) {
-    throw new Error(`AI response field ${key} must be an array`);
-  }
-  if ((record[key] as unknown[]).some((item) => typeof item !== 'string')) {
-    throw new Error(`AI response field ${key} must contain only strings`);
-  }
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-function requireOptionalString(record: Record<string, unknown>, key: string) {
-  if (record[key] !== undefined && typeof record[key] !== 'string') {
-    throw new Error(`AI response field ${key} must be a string`);
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function unwrapAnalysisRecord(record: Record<string, unknown>): Record<string, unknown> {
+  if (normalizeOptionalString(record.name) || normalizeOptionalString(record.summary)) {
+    return record;
   }
+  for (const key of ['data', 'result', 'analysis', 'project']) {
+    const nested = record[key];
+    if (!isRecord(nested)) continue;
+    if (
+      normalizeOptionalString(nested.name) ||
+      normalizeOptionalString(nested.summary) ||
+      Array.isArray(nested.entries) ||
+      Array.isArray(nested.flows) ||
+      Array.isArray(nested.decisions)
+    ) {
+      return nested;
+    }
+  }
+  return record;
+}
+
+type AnalysisEntry = NonNullable<SimplifiedAnalysis['entries']>[number];
+type AnalysisFlow = NonNullable<SimplifiedAnalysis['flows']>[number];
+type AnalysisDecision = NonNullable<SimplifiedAnalysis['decisions']>[number];
+
+function normalizeEntry(value: unknown, index: number): AnalysisEntry | null {
+  if (!isRecord(value)) return null;
+  const record = value as Record<string, unknown>;
+  const name = normalizeOptionalString(record.name);
+  if (!name) return null;
+  return {
+    id: normalizeOptionalString(record.id) ?? `entry-${index}`,
+    name,
+    role: typeof record.role === 'string' && validRoles.includes(record.role) ? record.role : 'Developer',
+    kind: typeof record.kind === 'string' && validEntryKinds.includes(record.kind) ? record.kind : 'tool',
+    input: normalizeOptionalString(record.input) ?? '',
+    auth: normalizeOptionalString(record.auth) ?? '',
+    permissions: normalizeStringArray(record.permissions),
+    flowId: normalizeOptionalString(record.flowId),
+    sourcePath: normalizeOptionalString(record.sourcePath),
+    sourceQuote: normalizeOptionalString(record.sourceQuote),
+  };
+}
+
+function normalizeFlow(value: unknown, index: number): AnalysisFlow | null {
+  if (!isRecord(value)) return null;
+  const record = value as Record<string, unknown>;
+  const name = normalizeOptionalString(record.name);
+  if (!name) return null;
+  return {
+    id: normalizeOptionalString(record.id) ?? `flow-${index}`,
+    name,
+    trigger: normalizeOptionalString(record.trigger) ?? '',
+    description: normalizeOptionalString(record.description) ?? '',
+    steps: normalizeStringArray(record.steps),
+    errorPaths: normalizeStringArray(record.errorPaths),
+    sourcePath: normalizeOptionalString(record.sourcePath),
+    sourceQuote: normalizeOptionalString(record.sourceQuote),
+  };
+}
+
+function normalizeDecision(value: unknown, index: number): AnalysisDecision | null {
+  if (!isRecord(value)) return null;
+  const record = value as Record<string, unknown>;
+  const title = normalizeOptionalString(record.title);
+  if (!title) return null;
+  const parameters = Array.isArray(record.parameters)
+    ? record.parameters
+        .filter((parameter): parameter is Record<string, unknown> => isRecord(parameter))
+        .filter((parameter) => typeof parameter.key === 'string' && typeof parameter.value === 'string')
+        .map((parameter) => ({ key: parameter.key as string, value: parameter.value as string }))
+    : [];
+  return {
+    id: normalizeOptionalString(record.id) ?? `decision-${index}`,
+    title,
+    topic: normalizeOptionalString(record.topic) ?? '',
+    problem: normalizeOptionalString(record.problem) ?? '',
+    solution: normalizeOptionalString(record.solution) ?? '',
+    parameters,
+    rationale: normalizeOptionalString(record.rationale) ?? '',
+    alternatives: normalizeStringArray(record.alternatives),
+    tradeoffs: normalizeStringArray(record.tradeoffs),
+    sourcePath: normalizeOptionalString(record.sourcePath),
+    sourceQuote: normalizeOptionalString(record.sourceQuote),
+  };
+}
+
+function extractJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+    } else if (character === '{') {
+      depth += 1;
+    } else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function findLargestValidJsonObject(text: string): unknown | null {
+  let best: unknown = null;
+  let bestLength = 0;
+
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '{') continue;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let index = start; index < text.length; index += 1) {
+      const character = text[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === '\\') {
+          escaped = true;
+        } else if (character === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (character === '"') {
+        inString = true;
+      } else if (character === '{') {
+        depth += 1;
+      } else if (character === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          end = index;
+          break;
+        }
+      }
+    }
+    if (end < 0) continue;
+
+    const candidate = text.slice(start, end + 1);
+    if (candidate.length <= bestLength) continue;
+    try {
+      const parsed = JSON.parse(candidate);
+      best = parsed;
+      bestLength = candidate.length;
+    } catch {
+      // Skip prose that happens to contain JSON-style braces.
+    }
+  }
+
+  return best;
 }
 
 export function parseAIResponse(text: string): SimplifiedAnalysis {
-  const trimmed = text.trim().replace(/^```json\s*/i, '').replace(/```$/i, '');
-  const parsed = JSON.parse(trimmed);
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    const extracted = extractJsonObject(text);
+    if (extracted !== null) {
+      try {
+        parsed = JSON.parse(extracted);
+      } catch {
+        // Try the larger scan below.
+      }
+    }
+    if (parsed === undefined) {
+      parsed = findLargestValidJsonObject(text);
+    }
+    if (parsed === null || parsed === undefined) {
+      throw new Error(`AI response is not valid JSON: ${trimmed.slice(0, 200)}`);
+    }
+  }
   if (typeof parsed !== 'object' || parsed === null) throw new Error('AI response is not an object');
-  const record = parsed as Record<string, unknown>;
-  if (typeof record.name !== 'string' || typeof record.summary !== 'string') {
-    throw new Error('AI response is missing name or summary');
+  const record = unwrapAnalysisRecord(parsed as Record<string, unknown>);
+  return {
+    name: normalizeOptionalString(record.name),
+    summary: normalizeOptionalString(record.summary),
+    techStack: normalizeStringArray(record.techStack),
+    coreModules: normalizeStringArray(record.coreModules),
+    importantFiles: normalizeStringArray(record.importantFiles),
+    entries: Array.isArray(record.entries)
+      ? record.entries
+          .map((entry, index) => normalizeEntry(entry, index))
+          .filter((entry): entry is AnalysisEntry => entry !== null)
+      : [],
+    flows: Array.isArray(record.flows)
+      ? record.flows
+          .map((flow, index) => normalizeFlow(flow, index))
+          .filter((flow): flow is AnalysisFlow => flow !== null)
+      : [],
+    decisions: Array.isArray(record.decisions)
+      ? record.decisions
+          .map((decision, index) => normalizeDecision(decision, index))
+          .filter((decision): decision is AnalysisDecision => decision !== null)
+      : [],
+  };
+}
+
+export function isSubstantiveAnalysis(analysis: SimplifiedAnalysis | null): boolean {
+  if (!analysis) return false;
+  return (
+    (analysis.entries?.length ?? 0) > 0 ||
+    (analysis.flows?.length ?? 0) > 0 ||
+    (analysis.decisions?.length ?? 0) > 0
+  );
+}
+
+function looksLikeTemplateEcho(analysis: SimplifiedAnalysis): boolean {
+  const sample = [
+    analysis.name,
+    analysis.summary,
+    ...(analysis.entries ?? []).map((entry) => entry.name),
+    ...(analysis.flows ?? []).map((flow) => flow.name),
+    ...(analysis.decisions ?? []).map((decision) => decision.title),
+  ].join(' ').toLowerCase();
+  return /example-repo|one sentence about|schema only|placeholder|your-repository|your-repo|lorem ipsum/.test(sample);
+}
+
+function staticFallback(
+  context: RepositoryContext,
+  language: Language,
+): { entries: AnalysisEntry[]; flows: AnalysisFlow[] } {
+  const entries: AnalysisEntry[] = [];
+  const flows: AnalysisFlow[] = [];
+  const seen = new Set<string>();
+
+  for (const route of context.staticAnalysis.routes) {
+    const key = `http|${route.method}|${route.path}|${route.file}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const flowId = `static-flow-${flows.length + 1}`;
+    flows.push({
+      id: flowId,
+      name: `${route.method} ${route.path}`,
+      trigger: language === 'zh' ? `${route.method} 请求 ${route.path}` : `${route.method} request to ${route.path}`,
+      description: language === 'zh'
+        ? `由 ${route.file} 中的 ${route.framework} 路由处理`
+        : `Handled by a ${route.framework} route in ${route.file}`,
+      steps: [
+        language === 'zh' ? `接收 ${route.method} ${route.path} 请求` : `Receive ${route.method} ${route.path} request`,
+        language === 'zh' ? `调度到 ${route.file} 中的处理器` : `Dispatch to the handler in ${route.file}`,
+        language === 'zh' ? '执行业务逻辑' : 'Execute business logic',
+        language === 'zh' ? '返回响应' : 'Return response',
+      ],
+      errorPaths: [],
+      sourcePath: route.file,
+    });
+    entries.push({
+      id: `static-entry-${entries.length + 1}`,
+      name: `${route.method} ${route.path}`,
+      role: 'End user',
+      kind: 'http',
+      input: route.path,
+      auth: '',
+      permissions: [],
+      flowId,
+      sourcePath: route.file,
+    });
   }
 
-  for (const key of ['techStack', 'coreModules', 'importantFiles']) {
-    requireStringArray(record, key);
+  for (const command of context.staticAnalysis.commands) {
+    const key = `cli|${command.name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const flowId = `static-flow-${flows.length + 1}`;
+    flows.push({
+      id: flowId,
+      name: language === 'zh' ? `命令 ${command.name}` : `Command ${command.name}`,
+      trigger: language === 'zh' ? `执行 ${command.name}` : `Run ${command.name}`,
+      description: language === 'zh'
+        ? `由 ${command.file} 定义（${command.source}）`
+        : `Defined in ${command.file} (${command.source})`,
+      steps: [
+        language === 'zh' ? `调用 ${command.name}` : `Invoke ${command.name}`,
+        language === 'zh' ? `解析 ${command.file} 中的参数` : `Parse arguments in ${command.file}`,
+        language === 'zh' ? '执行命令逻辑' : 'Execute command logic',
+      ],
+      errorPaths: [],
+      sourcePath: command.file,
+    });
+    entries.push({
+      id: `static-entry-${entries.length + 1}`,
+      name: language === 'zh' ? `运行 ${command.name}` : `Run ${command.name}`,
+      role: 'Developer',
+      kind: 'cli',
+      input: command.name,
+      auth: '',
+      permissions: [],
+      flowId,
+      sourcePath: command.file,
+    });
   }
 
-  if (record.entries !== undefined) {
-    if (!Array.isArray(record.entries)) throw new Error('AI response field entries must be an array');
-    for (const entry of record.entries) {
-      if (!isRecord(entry)) throw new Error('Each AI response entry must be an object');
-      if (typeof entry.name !== 'string' || entry.name.length === 0) {
-        throw new Error('Each AI response entry requires a non-empty name');
-      }
-      if (!validRoles.includes(entry.role as string)) {
-        throw new Error(`AI response entry role is invalid: ${String(entry.role)}`);
-      }
-      if (!validEntryKinds.includes(entry.kind as string)) {
-        throw new Error(`AI response entry kind is invalid: ${String(entry.kind)}`);
-      }
-      requireOptionalString(entry, 'flowId');
-      requireOptionalString(entry, 'sourcePath');
-      requireOptionalString(entry, 'sourceQuote');
-      requireStringArray(entry, 'permissions');
-    }
+  for (const handler of context.staticAnalysis.eventHandlers) {
+    const key = `event|${handler.event}|${handler.file}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const flowId = `static-flow-${flows.length + 1}`;
+    flows.push({
+      id: flowId,
+      name: language === 'zh' ? `事件 ${handler.event}` : `Event ${handler.event}`,
+      trigger: language === 'zh' ? `触发 ${handler.event}` : `${handler.event} fires`,
+      description: language === 'zh'
+        ? `监听器位于 ${handler.file}`
+        : `Listener defined in ${handler.file}`,
+      steps: [
+        language === 'zh' ? `监听 ${handler.event} 事件` : `Listen for ${handler.event}`,
+        language === 'zh' ? `执行 ${handler.file} 中的回调` : `Run the callback in ${handler.file}`,
+      ],
+      errorPaths: [],
+      sourcePath: handler.file,
+    });
+    entries.push({
+      id: `static-entry-${entries.length + 1}`,
+      name: handler.event,
+      role: 'System',
+      kind: 'event',
+      input: handler.event,
+      auth: '',
+      permissions: [],
+      flowId,
+      sourcePath: handler.file,
+    });
   }
 
-  if (record.flows !== undefined) {
-    if (!Array.isArray(record.flows)) throw new Error('AI response field flows must be an array');
-    for (const flow of record.flows) {
-      if (!isRecord(flow)) throw new Error('Each AI response flow must be an object');
-      if (typeof flow.name !== 'string' || flow.name.length === 0) {
-        throw new Error('Each AI response flow requires a non-empty name');
-      }
-      if (!Array.isArray(flow.steps) || flow.steps.some((step) => typeof step !== 'string')) {
-        throw new Error(`AI response flow ${String(flow.name)} requires a string array named steps`);
-      }
-      requireStringArray(flow, 'errorPaths');
-      requireOptionalString(flow, 'sourcePath');
-      requireOptionalString(flow, 'sourceQuote');
-    }
+  for (const job of context.staticAnalysis.jobs) {
+    const key = `job|${job.name}|${job.file}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const flowId = `static-flow-${flows.length + 1}`;
+    flows.push({
+      id: flowId,
+      name: language === 'zh' ? `定时任务 ${job.name}` : `Job ${job.name}`,
+      trigger: job.schedule
+        ? language === 'zh' ? `按计划 ${job.schedule} 触发` : `Triggered on schedule ${job.schedule}`
+        : language === 'zh' ? '按内部时机触发' : 'Triggered by an internal cadence',
+      description: language === 'zh'
+        ? `任务定义位于 ${job.file}`
+        : `Job defined in ${job.file}`,
+      steps: [
+        language === 'zh' ? `启动 ${job.name} 任务` : `Start the ${job.name} job`,
+        language === 'zh' ? `执行 ${job.file} 中的处理逻辑` : `Run the processing logic in ${job.file}`,
+      ],
+      errorPaths: [],
+      sourcePath: job.file,
+    });
+    entries.push({
+      id: `static-entry-${entries.length + 1}`,
+      name: job.name,
+      role: 'System',
+      kind: 'job',
+      input: job.schedule ?? '',
+      auth: '',
+      permissions: [],
+      flowId,
+      sourcePath: job.file,
+    });
   }
 
-  if (record.decisions !== undefined) {
-    if (!Array.isArray(record.decisions)) throw new Error('AI response field decisions must be an array');
-    for (const decision of record.decisions) {
-      if (!isRecord(decision)) throw new Error('Each AI response decision must be an object');
-      for (const key of ['title', 'problem', 'solution']) {
-        if (typeof decision[key] !== 'string' || (decision[key] as string).length === 0) {
-          throw new Error(`Each AI response decision requires a non-empty ${key}`);
-        }
-      }
-      if (decision.parameters !== undefined) {
-        if (!Array.isArray(decision.parameters)) {
-          throw new Error('AI response decision parameters must be an array');
-        }
-        for (const parameter of decision.parameters) {
-          if (
-            !isRecord(parameter) ||
-            typeof parameter.key !== 'string' ||
-            typeof parameter.value !== 'string'
-          ) {
-            throw new Error('Each AI response decision parameter requires key and value strings');
-          }
-        }
-      }
-      requireStringArray(decision, 'alternatives');
-      requireStringArray(decision, 'tradeoffs');
-      requireOptionalString(decision, 'sourcePath');
-      requireOptionalString(decision, 'sourceQuote');
-    }
-  }
-
-  return record as SimplifiedAnalysis;
+  return { entries, flows };
 }
 
 function findEvidenceLocation(file: RepositoryFile, quote: string) {
@@ -392,8 +791,12 @@ export function toProject(
   language: Language,
 ): Project {
   const evidence: Project['evidence'] = [];
+  const staticFill = staticFallback(context, language);
+  const analysisEntries = analysis.entries?.length ? analysis.entries : staticFill.entries;
+  const analysisFlows = analysis.flows?.length ? analysis.flows : staticFill.flows;
+  const analysisDecisions = analysis.decisions?.length ? analysis.decisions : [];
 
-  const flows = (analysis.flows ?? []).map((flow, flowIndex) => {
+  const flows = analysisFlows.map((flow, flowIndex) => {
     const flowId = flow.id ?? `flow-${flowIndex}`;
     const flowEvidence = createEvidence({
       id: `ev-${flowId}`,
@@ -443,7 +846,7 @@ export function toProject(
     };
   });
 
-  const entries = (analysis.entries ?? []).map((entry, index) => {
+  const entries = analysisEntries.map((entry, index) => {
     const entryEvidence = createEvidence({
       id: `ev-entry-${entry.id ?? index}`,
       label: entry.name ?? `Entry ${index + 1}`,
@@ -464,7 +867,7 @@ export function toProject(
     };
   });
 
-  const decisions = (analysis.decisions ?? []).map((decision, index) => {
+  const decisions = analysisDecisions.map((decision, index) => {
     const decisionEvidence = createEvidence({
       id: `ev-decision-${decision.id ?? index}`,
       label: decision.title ?? `Decision ${index + 1}`,
@@ -516,6 +919,7 @@ export function toProject(
     repository: `github.com/${context.owner}/${context.name}`,
     commit: context.commit,
     summary: analysis.summary ?? context.description,
+    analysisMode: 'ai',
     techStack: analysis.techStack ?? [],
     coreModules: analysis.coreModules ?? [],
     importantFiles: analysis.importantFiles ?? context.selectedFiles.map((file) => file.path),
@@ -555,6 +959,7 @@ export async function analyzeRepository({
   provider,
   apiKey,
   model,
+  endpoint,
   language,
   onProgress,
 }: AnalyzeOptions): Promise<Project> {
@@ -572,12 +977,70 @@ export async function analyzeRepository({
     stage: language === 'zh' ? '调用模型分析仓库' : 'Calling model to analyze repository',
   });
   const prompt = buildPrompt(context, language);
-  const responseText = await callAI({ provider, apiKey, model, prompt });
+  let responseText = await callAI({ provider, apiKey, model, prompt, endpoint, jsonMode: true });
   onProgress?.({
     progress: 85,
     stage: language === 'zh' ? '解析结构化结果' : 'Parsing structured result',
   });
-  const analysis = parseAIResponse(responseText);
+  let analysis: SimplifiedAnalysis | null = null;
+  let partiallyStructuredCandidate: SimplifiedAnalysis | null = null;
+  let lastError = 'AI response could not be parsed';
+
+  for (let attempt = 0; attempt <= 2 && analysis === null; attempt += 1) {
+    try {
+      const candidate = parseAIResponse(responseText);
+      if (looksLikeTemplateEcho(candidate)) {
+        lastError = 'AI response echoed the schema template without real repository data';
+      } else {
+        partiallyStructuredCandidate = candidate;
+        if (isSubstantiveAnalysis(candidate)) {
+          analysis = candidate;
+          break;
+        }
+        lastError = 'AI response contains only metadata and is missing entries, flows, or decisions';
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'AI response could not be parsed';
+    }
+
+    if (analysis !== null) break;
+    if (attempt >= 2) break;
+
+    console.warn(
+      `[repolens] AI response unusable: ${lastError} ` +
+      `(responseLength=${responseText.length}, preview=${responseText.slice(0, 240).replace(/\n/g, ' ')}); retrying with repair prompt`,
+    );
+    onProgress?.({
+      progress: 86 + attempt * 2,
+      stage: language === 'zh' ? `修复 AI 输出格式并重试 (${attempt + 1}/2)` : `Repairing AI output and retrying (${attempt + 1}/2)`,
+    });
+    const repairPrompt = buildRepairPrompt(responseText, context, language, lastError);
+    responseText = await callAI({ provider, apiKey, model, prompt: repairPrompt, endpoint, jsonMode: true });
+  }
+
+  if (!analysis && partiallyStructuredCandidate) {
+    console.warn(
+      `[repolens] AI output had no structured sections (${lastError}); hydrating entry/flow sections from static analysis`,
+    );
+    analysis = partiallyStructuredCandidate;
+  }
+
+  if (!analysis) {
+    console.warn(
+      `[repolens] AI analysis unusable after retries (${lastError}); falling back to static repository analysis`,
+    );
+    onProgress?.({
+      progress: 95,
+      stage: language === 'zh' ? '使用静态分析兜底' : 'Falling back to static analysis',
+    });
+    const fallbackProject = toProject(
+      { name: context.name, summary: context.description },
+      context,
+      language,
+    );
+    fallbackProject.analysisMode = 'static';
+    return fallbackProject;
+  }
   onProgress?.({
     progress: 95,
     stage: language === 'zh' ? '生成项目学习地图' : 'Building project learning map',

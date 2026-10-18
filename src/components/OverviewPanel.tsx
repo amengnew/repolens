@@ -14,6 +14,9 @@ export function OverviewPanel({ project }: OverviewPanelProps) {
         <div>
           <h1 className="section-title">{t('projectOverview')}</h1>
           <p className="section-subtitle">{project.summary}</p>
+          {project.analysisMode === 'static' && (
+            <span className="tag analysis-mode-tag">{t('staticFallback')}</span>
+          )}
         </div>
       </div>
 
