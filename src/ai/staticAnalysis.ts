@@ -38,10 +38,18 @@ export interface StaticAnalysisResult {
 interface RepositoryFile {
   path: string;
   content: string;
+  downloadError?: string;
 }
 
 function lineOfIndex(content: string, index: number) {
   return content.slice(0, index).split(/\r?\n/).length;
+}
+
+function packageJsonValueLine(content: string, key: string): number {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`"${escapedKey}"\\s*:`).exec(content);
+  if (!match) return 1;
+  return lineOfIndex(content, match.index);
 }
 
 function collectMatches(
@@ -74,7 +82,7 @@ function parsePackageJson(file: RepositoryFile, result: StaticAnalysisResult) {
       result.commands.push({
         name,
         file: file.path,
-        line: 1,
+        line: packageJsonValueLine(file.content, name),
         source: 'package.json script',
       });
     }
@@ -105,6 +113,8 @@ export function analyzeStaticFiles(files: RepositoryFile[]): StaticAnalysisResul
   };
 
   for (const file of files) {
+    if (file.downloadError) continue;
+
     if (file.path.endsWith('package.json')) {
       parsePackageJson(file, result);
     }
@@ -150,13 +160,13 @@ export function analyzeStaticFiles(files: RepositoryFile[]): StaticAnalysisResul
 
     collectMatches(
       file.content,
-      /(?:program|cli|command)\.command\(\s*['"`]([^'"`]+)['"`]/,
+      /(?<![@A-Za-z0-9_])(?:program|cli|command|yargs|builder)\.command(?:Async)?\(\s*['"`]([^'"`]+)['"`]/,
       (match, line) => {
         result.commands.push({
           name: match[1],
           file: file.path,
           line,
-          source: 'Commander-style CLI',
+          source: 'JS CLI framework',
         });
       },
     );

@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { analyzeRepository } from '../src/ai/analyze.ts';
+import { analyzeRepository, synthesizeDecisionRationale } from '../src/ai/analyze.ts';
 import {
   buildAskPrompt,
   buildMockAskResult,
@@ -52,6 +52,7 @@ interface AnalysisRequest {
   provider: ProviderId;
   model: string;
   language: Language;
+  force?: boolean;
 }
 
 type JobStatus = 'queued' | 'running' | 'complete' | 'error';
@@ -88,7 +89,7 @@ function parseRequest(body: string): AnalysisRequest {
     throw new Error('Request body must be an object');
   }
 
-  const { repoUrl, provider, model, language } = parsed as Partial<AnalysisRequest>;
+  const { repoUrl, provider, model, language, force } = parsed as Partial<AnalysisRequest>;
   if (typeof repoUrl !== 'string' || !/^https:\/\/github\.com\/[^/]+\/[^/]+/.test(repoUrl)) {
     throw new Error('repoUrl must be a GitHub repository URL');
   }
@@ -102,11 +103,29 @@ function parseRequest(body: string): AnalysisRequest {
     throw new Error('language must be en or zh');
   }
 
-  return { repoUrl, provider, model, language };
+  return { repoUrl, provider, model, language, force: force === true };
 }
 
 function normalizedRepositoryUrl(repoUrl: string) {
   return repoUrl.replace(/^https?:\/\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+}
+
+function backfillDecisionRationale(project: unknown, language: Language = 'zh'): unknown {
+  if (!project || typeof project !== 'object' || Array.isArray(project)) return project;
+  const { decisions } = project as {
+    decisions?: Array<{
+      rationale?: string;
+      problem?: string;
+      solution?: string;
+      parameters?: Array<{ key: string; value: string }>;
+    }>;
+  };
+  if (!Array.isArray(decisions)) return project;
+  for (const decision of decisions) {
+    if (typeof decision.rationale === 'string' && decision.rationale.trim().length > 0) continue;
+    decision.rationale = synthesizeDecisionRationale(decision, language);
+  }
+  return project;
 }
 
 function findLatestProject(repoUrl: string): unknown | null {
@@ -119,7 +138,7 @@ function findLatestProject(repoUrl: string): unknown | null {
     const result = job.result as { repository?: string } | undefined;
     if (normalizedRepositoryUrl(result?.repository ?? '') === normalized
       || normalizedRepositoryUrl(job.request.repoUrl) === normalized) {
-      return job.result ?? null;
+      return result ? backfillDecisionRationale(result, job.request.language) : null;
     }
   }
   return null;
@@ -160,6 +179,10 @@ const providerEnvKeys: Record<ProviderId, string | null> = {
   gemini: 'GEMINI_API_KEY',
   custom: 'CUSTOM_AI_API_KEY',
 };
+
+// Bump this when analysis prompts or context selection change so stale cached
+// results are not served for the same repository/model/commit combination.
+const analysisCacheRevision = 'source-first-v5';
 
 const providerModelEnvKeys: Record<ProviderId, string | null> = {
   mock: null,
@@ -318,7 +341,7 @@ async function saveJob(job: AnalysisJob) {
 }
 
 function cacheKey(input: AnalysisRequest, commit: string) {
-  return [input.repoUrl, input.provider, input.model, commit, input.language].join('|');
+  return [input.repoUrl, input.provider, input.model, commit, input.language, analysisCacheRevision].join('|');
 }
 
 function publicJob(job: AnalysisJob) {
@@ -330,7 +353,7 @@ function publicJob(job: AnalysisJob) {
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt: job.completedAt,
-    result: job.result,
+    result: job.result ? backfillDecisionRationale(job.result, job.request.language) : undefined,
     error: job.error,
   };
 }
@@ -365,6 +388,10 @@ function createJob(request: AnalysisRequest): AnalysisJob {
   return job;
 }
 
+function isTransientGitHubError(message: string) {
+  return /terminated|fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|empty response|GitHub request timed out/i.test(message);
+}
+
 function processQueue() {
   while (activeJobCount < maxConcurrentJobs && jobQueue.length > 0) {
     const jobId = jobQueue.shift();
@@ -378,37 +405,67 @@ async function runJob(jobId: string) {
   if (!job) return;
 
   activeJobCount += 1;
-  job.status = 'running';
-  job.progress = 5;
-  job.startedAt = Date.now();
-  log('analysis:started', {
-    jobId,
-    repository: job.request.repoUrl,
-    provider: job.request.provider,
-    model: job.request.model,
-  });
-
   try {
-    const project = await analyzeRepository({
-      ...job.request,
-      apiKey: providerApiKey(job.request.provider),
-      endpoint: job.request.provider === 'custom' ? customEndpoint() : undefined,
-      onProgress: (progress) => {
-      job.progress = Math.max(job.progress, progress.progress);
-      job.stage = progress.stage;
-      log('analysis:progress', {
+    let project;
+    let lastError: Error | null = null;
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      job.status = 'running';
+      job.progress = 5;
+      job.startedAt = Date.now();
+      log('analysis:started', {
         jobId,
-        progress: job.progress,
-        stage: job.stage,
+        attempt,
+        repository: job.request.repoUrl,
+        provider: job.request.provider,
+        model: job.request.model,
       });
-      },
-    });
+
+      try {
+        project = await analyzeRepository({
+          ...job.request,
+          apiKey: providerApiKey(job.request.provider),
+          endpoint: job.request.provider === 'custom' ? customEndpoint() : undefined,
+          onProgress: (progress) => {
+            job.progress = Math.max(job.progress, progress.progress);
+            job.stage = progress.stage;
+            log('analysis:progress', {
+              jobId,
+              progress: job.progress,
+              stage: job.stage,
+            });
+          },
+        });
+        break;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error('Analysis failed');
+        if (
+          attempt < maxAttempts &&
+          isTransientGitHubError(lastError.message)
+        ) {
+          const delayMs = 4000 * attempt;
+          job.stage = job.request.language === 'zh'
+            ? `网络波动，自动重试分析 (${attempt}/${maxAttempts - 1})`
+            : `Network issue, retrying analysis (${attempt}/${maxAttempts - 1})`;
+          log('analysis:retry', {
+            jobId,
+            attempt,
+            error: lastError.message,
+            delayMs,
+          });
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        throw lastError;
+      }
+    }
 
     const key = cacheKey(job.request, project.commit);
     const projects = await loadProjects();
-    const cached = projects[key];
+    const cached = job.request.force ? undefined : projects[key];
     const result = cached ?? project;
-    log(cached ? 'analysis:cache-hit' : 'analysis:cache-miss', {
+    log(job.request.force ? 'analysis:forced' : cached ? 'analysis:cache-hit' : 'analysis:cache-miss', {
       jobId,
       cacheKey: key,
     });

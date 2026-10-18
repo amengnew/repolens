@@ -18,9 +18,7 @@ export function DecisionsPanel({ project, selectedDecisionId, onSelectDecision }
       <div className="section-header">
         <div>
           <h1 className="section-title">{t('engineeringDecisions')}</h1>
-          <p className="section-subtitle">
-            The layer that explains why the implementation works this way, what it costs, and when it is worth borrowing.
-          </p>
+          <p className="section-subtitle">{t('decisionSubtitle')}</p>
         </div>
       </div>
 
@@ -65,8 +63,8 @@ export function DecisionsPanel({ project, selectedDecisionId, onSelectDecision }
             <table className="parameter-table">
               <thead>
                 <tr>
-                  <th>Key</th>
-                  <th>Value</th>
+                  <th>{t('key')}</th>
+                  <th>{t('value')}</th>
                 </tr>
               </thead>
               <tbody>

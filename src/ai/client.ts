@@ -8,6 +8,7 @@ export interface AnalyzeRequest {
   provider: ProviderId;
   model: string;
   language: Language;
+  force?: boolean;
 }
 
 export type AnalysisJobStatus = 'queued' | 'running' | 'complete' | 'error';

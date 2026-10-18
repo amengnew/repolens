@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isSubstantiveAnalysis, parseAIResponse, toProject } from './analyze.ts';
+import { isSubstantiveAnalysis, parseAIResponse, selectRepositoryPaths, toProject } from './analyze.ts';
 
 const context = {
   owner: 'example',
@@ -100,9 +100,123 @@ test('uses repository file evidence when a quote is unavailable', () => {
   );
 
   const evidence = project.evidence.find((item) => item.id === 'ev-decision-http-server');
-  assert.equal(evidence?.confidence, 'doc verified');
-  assert.ok(evidence?.code.includes('import express'));
+  assert.equal(evidence?.confidence, 'source verified');
+  assert.ok(evidence?.code.includes('app.post'));
   assert.equal(project.repository, 'github.com/example/agent-app');
+});
+
+test('synthesizes a non-empty rationale when AI omits it', () => {
+  const project = toProject(
+    {
+      name: 'agent-app',
+      summary: 'Example',
+      decisions: [
+        {
+          id: 'context-budget',
+          title: 'Context budget',
+          problem: 'Older turns grow without limit',
+          solution: 'Summarize turns older than the budget',
+          parameters: [{ key: 'Budget', value: '12000' }],
+        },
+      ],
+    },
+    context,
+    'zh',
+  );
+
+  assert.ok(project.decisions[0].rationale.length > 20);
+  assert.match(project.decisions[0].rationale, /Budget=12000/);
+});
+
+test('selects real source files over documentation variants', () => {
+  const paths = [
+    'README.md',
+    'README.i18n.yaml',
+    'apps/cli/README.md',
+    'apps/cli/README.zh.md',
+    'apps/cli/README.i18n.yaml',
+    'apps/cli/package.json',
+    'apps/cli/src/bin.ts',
+    'apps/cli/src/args.ts',
+    'apps/cli/src/runner.ts',
+    'apps/cli/src/commands/run.ts',
+    'apps/desktop/package.json',
+    'apps/desktop/src/main.ts',
+    'apps/desktop/src/ui.ts',
+    'packages/core/src/harness.ts',
+    'packages/core/src/plugin.ts',
+    'docs/architecture.md',
+    'server/index.ts',
+  ];
+
+  const selected = selectRepositoryPaths(paths, 14);
+
+  assert.ok(selected.includes('apps/cli/src/bin.ts'));
+  assert.ok(selected.includes('apps/cli/src/args.ts'));
+  assert.ok(!selected.includes('README.i18n.yaml'));
+  assert.ok(!selected.includes('apps/cli/README.i18n.yaml'));
+  assert.ok(selected.filter((path) => path.endsWith('.md')).length <= 2);
+  assert.ok(selected.includes('README.md'));
+});
+
+test('keeps strong CLI entries when the same directory is full', () => {
+  const selected = selectRepositoryPaths([
+    'apps/api/README.md',
+    'apps/api/package.json',
+    'apps/api/src/routes/health.ts',
+    'apps/api/src/bin.ts',
+    'apps/api/src/args.ts',
+    'apps/api/src/index.ts',
+  ], 8);
+
+  assert.ok(selected.includes('apps/api/src/bin.ts'));
+  assert.ok(selected.includes('apps/api/src/args.ts'));
+  assert.ok(selected.includes('apps/api/src/index.ts'));
+});
+
+test('drops docs-site and website scaffolding from source selection', () => {
+  const selected = selectRepositoryPaths([
+    'apps/cli/src/args.ts',
+    'apps/cli/src/bin.ts',
+    'apps/web/package.json',
+    'apps/web/src/main.ts',
+    'website/package.json',
+    'website/.vitepress/theme/index.ts',
+    'README.md',
+    'package.json',
+    'python/sdk/pyproject.toml',
+    'python/sdk/src/deepseek_harness/api.py',
+  ], 14);
+
+  assert.ok(selected.includes('apps/cli/src/args.ts'));
+  assert.ok(selected.includes('apps/cli/src/bin.ts'));
+  assert.ok(selected.includes('python/sdk/src/deepseek_harness/api.py'));
+  assert.ok(!selected.includes('website/package.json'));
+  assert.ok(!selected.includes('website/.vitepress/theme/index.ts'));
+});
+
+test('matches source quotes across whitespace and line wrapping', () => {
+  const evidence = toProject(
+    {
+      name: 'agent-app',
+      summary: 'Example',
+      flows: [
+        {
+          id: 'chat-flow',
+          name: 'Chat flow',
+          steps: ['Receive request'],
+          sourcePath: 'src/index.ts',
+          sourceQuote: 'app.post(\n  "/chat",\n  async (req, res) => {',
+        },
+      ],
+    },
+    context,
+    'en',
+  );
+
+  const item = evidence.evidence.find((entry) => entry.id === 'ev-chat-flow-node-0');
+  assert.equal(item?.confidence, 'source verified');
+  assert.equal(item?.startLine, 4);
 });
 
 test('accepts a valid structured AI response', () => {
@@ -165,6 +279,31 @@ That is the complete result.`);
 
   assert.equal(analysis.name, 'agent-app');
   assert.equal(analysis.summary, 'Embedded prose example');
+});
+
+test('rejects stray small objects from prose', () => {
+  assert.throws(
+    () => parseAIResponse(`Thinking about the schema:
+{"key":"flagOwnership","value":"launcher parses only its own flags"}
+Need to continue and write the real JSON.`),
+    /does not contain repository analysis fields/,
+  );
+});
+
+test('rejects a partial nested entry object from a truncated response', () => {
+  assert.throws(
+    () => parseAIResponse(`{
+  "name": "agent-app",
+  "summary": "Example",
+  "entries": [
+    {
+      "id": "cli-entry",
+      "name": "CLI entry",
+      "sourcePath": "apps/cli/src/bin.ts"
+    }
+  ]`),
+    /partial nested JSON object/,
+  );
 });
 
 test('normalizes an AI response entry with an unknown kind', () => {
@@ -230,6 +369,57 @@ test('hydrates empty structured sections from static analysis', () => {
   assert.equal(project.entries[0].name, 'GET /health');
   assert.equal(project.flows[0].name, 'GET /health');
   assert.equal(project.flows[0].nodes.length, 4);
+});
+
+test('marks hydrated output as static when AI returned no structured sections', () => {
+  const project = toProject(
+    { name: 'agent-app', summary: 'Example' },
+    context,
+    'en',
+    'static',
+  );
+
+  assert.equal(project.analysisMode, 'static');
+});
+
+test('anchors static event evidence to its own listener line', () => {
+  const file = [
+    'import express from "express";',
+    '',
+    'const app = express();',
+    'app.use(express.json());',
+    'app.get("/health", handler);',
+    'app.post("/chat", handler);',
+    'app.use(errorHandler);',
+    '',
+    'const server = app.listen(3000);',
+    '',
+    'server.on("listening", () => console.log("up"));',
+    'server.on("ready", () => console.log("ready"));',
+  ].join('\n');
+  const project = toProject(
+    { name: 'agent-app', summary: 'Example' },
+    {
+      ...context,
+      selectedFiles: [{ path: 'src/index.ts', content: file }],
+      staticAnalysis: {
+        ...context.staticAnalysis,
+        eventHandlers: [
+          { event: 'error', file: 'src/index.ts', line: 7 },
+          { event: 'ready', file: 'src/index.ts', line: 12 },
+        ],
+      },
+    },
+    'en',
+  );
+
+  const errorEvidence = project.evidence.find(
+    (item) => item.id === 'ev-static-flow-1' || item.id === 'ev-entry-static-entry-1',
+  );
+  assert.deepEqual(errorEvidence?.startLine, 7);
+  assert.ok(errorEvidence?.code.includes('app.use(errorHandler'));
+  const readyEvidence = project.evidence.find((item) => item.id === 'ev-static-flow-2');
+  assert.deepEqual(readyEvidence?.startLine, 12);
 });
 
 test('treats metadata-only AI output as not substantive', () => {

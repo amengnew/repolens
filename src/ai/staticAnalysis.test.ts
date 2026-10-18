@@ -39,6 +39,28 @@ test('extracts routes, commands, events, jobs, and package metadata', () => {
   assert.equal(result.scripts.test, 'node --test');
 });
 
+test('anchors package.json scripts to the script line', () => {
+  const result = analyzeStaticFiles([
+    {
+      path: 'native/system/package.json',
+      content: [
+        '{',
+        '  "name": "native-system",',
+        '  "scripts": {',
+        '    "build": "tsc",',
+        '    "test": "node --test"',
+        '  }',
+        '}',
+      ].join('\n'),
+    },
+  ]);
+
+  const build = result.commands.find((command) => command.name === 'build');
+  const test = result.commands.find((command) => command.name === 'test');
+  assert.equal(build?.line, 4);
+  assert.equal(test?.line, 5);
+});
+
 test('extracts Next.js App Router route paths', () => {
   const result = analyzeStaticFiles([
     {
@@ -64,4 +86,21 @@ test('extracts Python framework routes', () => {
   assert.equal(result.routes[0].method, 'POST');
   assert.equal(result.routes[0].path, '/api/chat');
   assert.equal(result.routes[0].framework, 'Python web framework');
+});
+
+test('extracts yargs and builder style commands', () => {
+  const result = analyzeStaticFiles([
+    {
+      path: 'apps/cli/src/bin.ts',
+      content: [
+        'yargs.command("run", "Run a task", () => {}, runHandler);',
+        'builder.commandAsync("serve", "Start the server");',
+      ].join('\n'),
+    },
+  ]);
+
+  assert.deepEqual(
+    result.commands.map((command) => command.name),
+    ['run', 'serve'],
+  );
 });
